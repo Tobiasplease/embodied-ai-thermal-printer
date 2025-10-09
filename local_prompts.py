@@ -3,16 +3,17 @@
 Simplified prompt functions extracted from the main codebase to make this system standalone.
 """
 
-def build_simple_caption_prompt(image_data, context=""):
+def build_simple_caption_prompt(image_data, context="", mood_context=""):
     """Build a simple caption prompt for image analysis"""
     prompt = f"""You are experiencing this moment through your camera vision. Look at what you see and respond naturally with your immediate thoughts and feelings about this scene.
 
 {context}
+{mood_context}
 
 Respond as a conscious being experiencing this visual moment. Be authentic and present. Keep your response under 15 words."""
     return prompt
 
-def build_environmental_caption_prompt(image_data, mood="neutral", context=""):
+def build_environmental_caption_prompt(image_data, mood="neutral", context="", **kwargs):
     """Build an environmental caption prompt with mood context"""
     mood_context = ""
     if mood and mood != "neutral":
