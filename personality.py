@@ -27,13 +27,11 @@ if parent_dir not in sys.path:
     sys.path.insert(0, parent_dir)
 
 # Import the real sophisticated prompts
-from captioner.prompts import (
-    build_simple_caption_prompt, 
+from local_prompts import (
+    build_simple_caption_prompt,
     build_environmental_caption_prompt,
     extract_motifs_spacy
-)
-
-# Restore our local config
+)# Restore our local config
 if 'local_config' in sys.modules:
     sys.modules['config'] = sys.modules['local_config']
     del sys.modules['local_config']
