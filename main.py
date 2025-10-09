@@ -24,13 +24,12 @@ from datetime import datetime
 from camera import Camera
 from personality import PersonalityAI
 from hand_control_integration import HandControlInterface, personality_to_hand_emotion
+from thermal_integration import create_thermal_printer
 from config import (
-    AI_PROCESS_INTERVAL, DEBUG_CAMERA, DEBUG_AI, DEBUG_MOTOR, 
+    AI_PROCESS_INTERVAL, DEBUG_CAMERA, DEBUG_AI, DEBUG_MOTOR,
     VERBOSE_OUTPUT, CAMERA_WIDTH, CAMERA_HEIGHT, SHOW_CAMERA_PREVIEW,
-    PREVIEW_WIDTH, PREVIEW_HEIGHT
+    PREVIEW_WIDTH, PREVIEW_HEIGHT, THERMAL_PRINTER_ENABLED
 )
-
-
 class EmbodiedAI:
     """Main embodied AI system - clean single-threaded design"""
     
@@ -39,6 +38,7 @@ class EmbodiedAI:
         self.camera = None
         self.personality = None
         self.hand_control = None
+        self.thermal_printer = None
         
         # Timing controls - avoid threading issues
         self.last_ai_process_time = 0
@@ -83,13 +83,16 @@ class EmbodiedAI:
             if DEBUG_AI:
                 print("🧠 Initializing AI personality...")
             self.personality = PersonalityAI()
-            
+
+            # Initialize thermal printer for subtitle printing
+            print("🖨️ Initializing thermal printer...")
+            self.thermal_printer = create_thermal_printer(enabled=THERMAL_PRINTER_ENABLED)
+            self.thermal_printer.start()
+
             # Initialize hand control
             if DEBUG_MOTOR:
                 print("🤖 Initializing hand control...")
-            self.hand_control = HandControlInterface()
-            
-            # Launch hand control process (optional)
+            self.hand_control = HandControlInterface()            # Launch hand control process (optional)
             # self.hand_control.launch_hand_controller(headless=True)
             
             print("✅ All components initialized successfully")
@@ -216,7 +219,11 @@ class EmbodiedAI:
                 # Show output with timestamp
                 timestamp_str = time.strftime("%H:%M:%S")
                 print(f"[{timestamp_str}] {clean_caption}")
-                
+
+                # Send to thermal printer for rhythmic printing
+                if self.thermal_printer:
+                    self.thermal_printer.print_subtitle(clean_caption)
+
                 if self.subtitle_chunks:
                     chunk_count = len(self.subtitle_chunks)
                     word_count = len(clean_caption.split())
@@ -398,10 +405,14 @@ class EmbodiedAI:
                 self.personality.save_state()
                 print("💾 AI state saved")
             
+            if self.thermal_printer:
+                self.thermal_printer.stop()
+                print("🖨️ Thermal printer stopped")
+
             if self.hand_control:
                 self.hand_control.cleanup()
                 print("🤖 Hand control cleaned up")
-            
+
             # Camera handled directly in main loop
             print("📷 Camera cleanup handled in main loop")
             

@@ -30,6 +30,10 @@ DEBUG_AI = True
 DEBUG_MOTOR = False
 VERBOSE_OUTPUT = True
 
+# Thermal Printer Settings
+THERMAL_PRINTER_ENABLED = True
+THERMAL_PRINTER_NAME = "XP-80"  # Default thermal printer name
+
 # Camera Preview Settings  
 SHOW_CAMERA_PREVIEW = True
 PREVIEW_WIDTH = 800

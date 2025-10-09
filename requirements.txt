@@ -1,5 +1,8 @@
 # Minimal dependencies for clean embodied AI system
 opencv-python>=4.8.0
 requests>=2.31.0
+pywin32>=306
+syllapy>=0.8.1
+pillow>=10.0.0
 numpy>=1.24.0
 pyserial>=3.5  # For hand controller hardware (optional)
