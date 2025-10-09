@@ -505,7 +505,7 @@ IMPORTANT: Keep response to 1-2 sentences maximum. Express your genuine first co
                 "prompt": prompt,
                 "stream": False,
                 "options": {
-                    "temperature": 0.7,  # More focused, less rambling but still creative
+                    "temperature": 0.5,  # More focused, concise responses for clean thermal output
                     "top_p": 0.85,       # Slightly more focused
                     "num_ctx": 2048,     # Smaller context for speed
                     "num_predict": 50    # Limit response length for brevity
@@ -583,7 +583,7 @@ IMPORTANT: Keep response to 1-2 sentences maximum. Express your genuine first co
                 "messages": messages,
                 "stream": False,
                 "options": {
-                    "temperature": 0.7,  # More focused, personal responses
+                    "temperature": 0.5,  # More focused, personal responses for thermal printing
                     "top_p": 0.85,      
                     "num_ctx": 3072,     # Larger context for system+user+history
                     "num_predict": 50    
