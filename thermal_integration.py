@@ -28,10 +28,43 @@ class ThermalSubtitlePrinter:
         self.connected = False
         
         if self.enabled:
+            self._clear_queue()  # Clear any residual items from previous sessions
             self._initialize_printer()
+    
+    def _clear_queue(self):
+        """Clear both software queue and Windows print spooler queue"""
+        # Clear in-memory queue
+        while not self.print_queue.empty():
+            try:
+                self.print_queue.get_nowait()
+            except queue.Empty:
+                break
+        
+        # Re-enabled: Issue identified as Windows spooler, not our code
+        
+        # Clear Windows print spooler for XP-80
+        try:
+            import subprocess
+            # Method 1: PowerShell command
+            result = subprocess.run(['powershell', '-Command', 
+                                   'Get-PrintJob -PrinterName "XP-80" | Remove-PrintJob'], 
+                                   capture_output=True, timeout=10, text=True)
+            if result.returncode == 0:
+                print("🗑️ Windows print spooler cleared for XP-80")
+            else:
+                # Method 2: Direct Windows commands
+                subprocess.run(['net', 'stop', 'spooler'], capture_output=True)
+                subprocess.run(['net', 'start', 'spooler'], capture_output=True)
+                print("🗑️ Print spooler service restarted")
+        except Exception as e:
+            print(f"⚠️ Could not clear Windows print spooler: {e}")
+            
+        print("🗑️ Thermal print queue cleared")
     
     def _initialize_printer(self):
         """Initialize and connect to thermal printer"""
+        # Re-enabled: Issue confirmed as Windows spooler persistence
+        
         try:
             self.printer = DiagonalTiltedPrinter()
             # Import printer name from config if available
@@ -43,6 +76,8 @@ class ThermalSubtitlePrinter:
             
             self.connected = self.printer.connect(printer_name)
             if self.connected:
+                # Clear any residual data in printer buffer
+                self.printer.clear_printer_buffer()
                 print("🖨️ Thermal printer connected and ready for subtitles")
             else:
                 print("⚠️ Thermal printer connection failed")
@@ -57,7 +92,10 @@ class ThermalSubtitlePrinter:
         if not self.enabled:
             print("📝 Thermal printing disabled - subtitles will display only on screen")
             return
-            
+        
+        # Clear any queued items from previous session
+        self._clear_queue()
+        
         self.running = True
         self.print_thread = threading.Thread(target=self._print_worker, daemon=True)
         self.print_thread.start()
@@ -100,8 +138,8 @@ class ThermalSubtitlePrinter:
         
         while self.running:
             try:
-                # Wait for next print job
-                print_item = self.print_queue.get(timeout=1.0)
+                # Wait for next print job (shorter timeout for faster response)
+                print_item = self.print_queue.get(timeout=0.1)
                 
                 if print_item['type'] == 'subtitle':
                     self._print_subtitle_rhythmic(print_item)

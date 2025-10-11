@@ -43,6 +43,23 @@ class DiagonalTiltedPrinter:
         self.BOLD_OFF = self.ESC + 'E\x00'
         self.UNDERLINE_ON = self.ESC + '-\x01'
         self.UNDERLINE_OFF = self.ESC + '-\x00'
+        
+        # Printer reset commands
+        self.PRINTER_RESET = self.ESC + '@'        # Initialize printer
+        self.BUFFER_CLEAR = self.ESC + 'c'         # Clear print buffer
+    
+    def clear_printer_buffer(self):
+        """Clear any residual data in printer buffer"""
+        try:
+            if self.printer_handle:
+                # Send reset commands
+                self.send_text(self.PRINTER_RESET)
+                self.send_text(self.BUFFER_CLEAR)
+                print("🗑️ Thermal printer buffer cleared")
+                return True
+        except Exception as e:
+            print(f"⚠️ Could not clear printer buffer: {e}")
+        return False
     
     def connect(self, printer_name="XP-80"):
         try:

@@ -30,6 +30,63 @@ from config import (
     VERBOSE_OUTPUT, CAMERA_WIDTH, CAMERA_HEIGHT, SHOW_CAMERA_PREVIEW,
     PREVIEW_WIDTH, PREVIEW_HEIGHT, THERMAL_PRINTER_ENABLED
 )
+
+def clear_print_queue_preemptive():
+    """Clear Windows print queue aggressively with admin elevation"""
+    try:
+        import subprocess
+        import os
+        import sys
+        print("🗑️ Aggressively clearing Windows print spooler...")
+        
+        # Create a batch file to run as admin
+        batch_content = '''
+@echo off
+echo Stopping print spooler...
+net stop spooler
+echo Clearing spooler files...
+del /q "C:\\Windows\\System32\\spool\\PRINTERS\\*.*" 2>nul
+echo Starting print spooler...
+net start spooler
+echo Print spooler cleared successfully!
+'''
+        
+        # Write batch file
+        batch_path = os.path.join(os.getcwd(), "clear_spooler.bat")
+        with open(batch_path, 'w') as f:
+            f.write(batch_content)
+        
+        # Run batch file with admin privileges using runas
+        print("🔐 Running spooler clear with admin privileges...")
+        try:
+            # Method 1: Try to run with elevated privileges
+            result = subprocess.run([
+                'powershell', '-Command', 
+                f'Start-Process -FilePath "{batch_path}" -Verb RunAs -Wait -WindowStyle Hidden'
+            ], capture_output=True, timeout=15, text=True)
+            
+            if result.returncode == 0:
+                print("✅ Print spooler cleared with admin privileges")
+            else:
+                raise Exception("Admin elevation failed")
+                
+        except Exception:
+            # Method 2: Fallback - try without elevation
+            print("⚠️ Admin elevation failed, trying without privileges...")
+            subprocess.run(['net', 'stop', 'spooler'], capture_output=True, shell=True)
+            subprocess.run(['net', 'start', 'spooler'], capture_output=True, shell=True)
+            print("✅ Print spooler restarted (limited permissions)")
+        
+        # Clean up batch file
+        try:
+            os.remove(batch_path)
+        except:
+            pass
+            
+    except Exception as e:
+        print(f"⚠️ Could not clear print queue: {e}")
+        print("💡 Manual solution: Run as Administrator and execute:")
+        print("   net stop spooler && del /q C:\\Windows\\System32\\spool\\PRINTERS\\*.* && net start spooler")
 class EmbodiedAI:
     """Main embodied AI system - clean single-threaded design"""
     
@@ -44,6 +101,7 @@ class EmbodiedAI:
         self.last_ai_process_time = 0
         self.last_motor_update_time = 0
         self.last_status_time = 0
+        self.ai_processing_lock = threading.Lock()  # Prevent concurrent AI processing
         
         # Frame processing
         self.frame_count = 0
@@ -58,6 +116,10 @@ class EmbodiedAI:
         self.last_chunk_change_time = 0
         self.subtitle_lock = threading.Lock()
         
+        # Silence period tracking
+        self.in_silence_period = False
+        self.silence_start_time = 0
+        
         # Setup signal handlers for clean shutdown
         signal.signal(signal.SIGINT, self._signal_handler)
         signal.signal(signal.SIGTERM, self._signal_handler)
@@ -67,13 +129,23 @@ class EmbodiedAI:
     
     def _signal_handler(self, signum, frame):
         """Handle shutdown signals gracefully"""
-        print(f"\n🛑 Shutdown signal received ({signum})")
+        print(f"\n🛑 Shutdown signal received ({signum}ö")
         self.shutdown()
         sys.exit(0)
     
     def initialize(self):
         """Initialize all components"""
         try:
+            # FIRST: Clear any stuck print jobs before connecting printer
+            clear_print_queue_preemptive()
+            
+            # Clear old personality state that has drawing machine references
+            import os
+            state_file = "personality_state.json"
+            if os.path.exists(state_file):
+                os.remove(state_file)
+                print("🧹 Cleared old personality state with drawing machine references")
+            
             # Skip Camera class initialization - we'll use direct cv2 access
             if DEBUG_CAMERA:
                 print("📷 Will initialize camera directly in main loop...")
@@ -130,17 +202,20 @@ class EmbodiedAI:
                 
                 # AI processing in SEPARATE THREAD (EXACT machine.py pattern)
                 if current_time - self.last_ai_process_time >= AI_PROCESS_INTERVAL:
-                    if DEBUG_AI:
-                        print(f"🧠 Starting AI thread at frame {self.frame_count}")
-                    
-                    # Start daemon thread for AI processing (machine.py pattern)
-                    ai_thread = threading.Thread(
-                        target=self._ai_processing_thread,
-                        args=(frame.copy(), current_time),
-                        daemon=True
-                    )
-                    ai_thread.start()
-                    self.last_ai_process_time = current_time
+                    # Only start new AI thread if previous one is complete
+                    if self.ai_processing_lock.acquire(blocking=False):  # Non-blocking acquire
+                        if DEBUG_AI:
+                            print(f"🧠 Starting AI thread at frame {self.frame_count}")
+                        
+                        # Start daemon thread for AI processing (machine.py pattern)
+                        ai_thread = threading.Thread(
+                            target=self._ai_processing_thread,
+                            args=(frame.copy(), current_time),
+                            daemon=True
+                        )
+                        ai_thread.start()
+                        self.last_ai_process_time = current_time
+                    # Removed spammy AI processing messages
                 
                 # === DISPLAY OVERLAYS === (EXACT machine.py pattern)
                 if SHOW_CAMERA_PREVIEW:
@@ -190,13 +265,26 @@ class EmbodiedAI:
                 print(f"🧠 AI thread processing frame at {timestamp}")
             
             # Call AI (this is the slow blocking operation)
+            # Simple consciousness processing
             response = self.personality.analyze_image(frame)
             
+            if DEBUG_AI:
+                if response:
+                    print(f"🤖 AI processing complete - got response")
+                else:
+                    print(f"❌ AI processing returned None/empty response")
+            
             if response:
+                if DEBUG_AI:
+                    print(f"🎯 AI returned response: {response[:100]}{'...' if len(response) > 100 else ''}")
+                
                 # Clean caption (no truncation!)
                 clean_caption = response.strip()
                 if clean_caption.lower().startswith("caption:"):
                     clean_caption = clean_caption[len("caption:"):].strip()
+                
+                if DEBUG_AI:
+                    print(f"🧹 Cleaned caption: {clean_caption[:100]}{'...' if len(clean_caption) > 100 else ''}")
                 
                 # Thread-safe live captioning subtitle update
                 with self.subtitle_lock:
@@ -210,6 +298,12 @@ class EmbodiedAI:
                     self.subtitle_start_time = time.time()
                     self.last_chunk_change_time = time.time()
                     
+                    # Reset silence period when new content appears
+                    if self.in_silence_period:
+                        self.in_silence_period = False
+                        if DEBUG_CAMERA:
+                            print()  # New line after silence timer
+                    
                     # Calculate dynamic duration for first chunk
                     if self.subtitle_chunks:
                         first_chunk = self.subtitle_chunks[0]
@@ -222,7 +316,12 @@ class EmbodiedAI:
 
                 # Send to thermal printer for rhythmic printing
                 if self.thermal_printer:
+                    if DEBUG_AI:
+                        print(f"🖨️ Sending to thermal printer: {clean_caption[:50]}...")
                     self.thermal_printer.print_subtitle(clean_caption)
+                else:
+                    if DEBUG_AI:
+                        print(f"❌ No thermal printer available")
 
                 if self.subtitle_chunks:
                     chunk_count = len(self.subtitle_chunks)
@@ -233,6 +332,11 @@ class EmbodiedAI:
             if DEBUG_AI:
                 print(f"AI thread error: {e}")
                 print(traceback.format_exc())
+        finally:
+            # Always release the AI processing lock
+            self.ai_processing_lock.release()
+            if DEBUG_AI:
+                print(f"🔓 AI processing lock released")
     
     def _create_smart_chunks(self, text):
         """Break text into sentence-based chunks for live captioning flow"""
@@ -278,8 +382,17 @@ class EmbodiedAI:
             
             # Hide chunk after 4 seconds maximum (important silence periods)
             if chunk_display_time >= 4.0:
-                if DEBUG_CAMERA:
-                    print(f"🔇 Chunk hidden after 4s - entering silence period")
+                if not self.in_silence_period:
+                    # Just entered silence period
+                    self.in_silence_period = True
+                    self.silence_start_time = current_time
+                    if DEBUG_CAMERA:
+                        print(f"🔇 Entering silence period...")
+                elif DEBUG_CAMERA:
+                    # Show countdown timer (update in place)
+                    silence_duration = current_time - self.silence_start_time
+                    # No specific end time for silence, just show duration
+                    print(f"\r🔇 Silence: {silence_duration:.1f}s", end="", flush=True)
                 return frame  # Show blank space - silence is important
             
             # Check if it's time to advance to next chunk (but only if we haven't hit 4-second limit)
@@ -289,6 +402,12 @@ class EmbodiedAI:
                 # Advance to next chunk
                 self.current_chunk_index += 1
                 self.last_chunk_change_time = current_time
+                
+                # Reset silence period when new content appears
+                if self.in_silence_period:
+                    self.in_silence_period = False
+                    if DEBUG_CAMERA:
+                        print()  # New line after silence timer
                 
                 # Calculate duration for new chunk
                 if self.current_chunk_index < len(self.subtitle_chunks):

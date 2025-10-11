@@ -9,14 +9,15 @@ CAMERA_FPS = 30
 
 # AI Settings
 OLLAMA_URL = "http://localhost:11434"
-OLLAMA_MODEL = "llava:13b"  # Upgraded to 13B for better consciousness quality
-AI_PROCESS_INTERVAL = 10.0  # seconds between AI processing (increased for 13B + sophisticated prompts)
+OLLAMA_MODEL = "llava:7b-v1.6-mistral-q5_1"  # Custom 7B LLaVA/Mistral hybrid model
+AI_PROCESS_INTERVAL = 3.0  # seconds between AI processing (7B + optimized prompts = much faster)
 USE_SOPHISTICATED_PROMPTS = False  # Testing hybrid focus-aware legacy system
 OLLAMA_TIMEOUT = 120  # seconds - increase for complex prompts
 
 # Personality Settings
-MEMORY_SIZE = 100  # number of observations to remember
-BELIEF_THRESHOLD = 0.7  # confidence needed to form beliefs
+MEMORY_SIZE = 50  # number of observations to remember (reduced)
+MAX_BELIEFS = 20  # maximum beliefs to keep (prevent clutter)
+BELIEF_THRESHOLD = 0.8  # confidence needed to form beliefs (higher threshold)
 PERSONALITY_SAVE_FILE = "personality_state.json"
 
 # Motor Settings  
