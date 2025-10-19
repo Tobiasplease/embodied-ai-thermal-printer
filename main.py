@@ -272,7 +272,7 @@ class EmbodiedAI:
                 if response:
                     print(f"🤖 AI processing complete - got response")
                 else:
-                    print(f"❌ AI processing returned None/empty response")
+                    print(f"🤫 AI choosing silence - no response")
             
             if response:
                 if DEBUG_AI:
@@ -286,11 +286,11 @@ class EmbodiedAI:
                 if DEBUG_AI:
                     print(f"🧹 Cleaned caption: {clean_caption[:100]}{'...' if len(clean_caption) > 100 else ''}")
                 
-                # Thread-safe live captioning subtitle update
+                # Thread-safe subtitle update - create smarter chunks
                 with self.subtitle_lock:
                     self.current_subtitle = clean_caption
                     
-                    # Create sentence-based chunks (like live captioning)
+                    # Create smarter chunks (10-20 words, natural breaks)
                     self.subtitle_chunks = self._create_smart_chunks(clean_caption)
                     
                     # Reset to first chunk
@@ -304,7 +304,7 @@ class EmbodiedAI:
                         if DEBUG_CAMERA:
                             print()  # New line after silence timer
                     
-                    # Calculate dynamic duration for first chunk
+                    # Calculate duration for first chunk
                     if self.subtitle_chunks:
                         first_chunk = self.subtitle_chunks[0]
                         word_count = len(first_chunk.split())
@@ -326,7 +326,7 @@ class EmbodiedAI:
                 if self.subtitle_chunks:
                     chunk_count = len(self.subtitle_chunks)
                     word_count = len(clean_caption.split())
-                    print(f"[{timestamp_str}] 💭 New thought cycling through {chunk_count} chunks...")
+                    print(f"[{timestamp_str}] 💭 New thought: {word_count} words in {chunk_count} chunks")
         
         except Exception as e:
             if DEBUG_AI:
@@ -338,39 +338,10 @@ class EmbodiedAI:
             if DEBUG_AI:
                 print(f"🔓 AI processing lock released")
     
-    def _create_smart_chunks(self, text):
-        """Break text into sentence-based chunks for live captioning flow"""
-        import re
-        
-        # Split into sentences using regex (more robust than simple punctuation)
-        sentences = re.split(r'[.!?]+', text)
-        sentences = [s.strip() for s in sentences if s.strip()]
-        
-        chunks = []
-        for sentence in sentences:
-            # Don't split sentences that are reasonable length (max ~8 words)
-            if len(sentence.split()) <= 8:
-                chunks.append(sentence)
-            else:
-                # Split long sentences at natural breaks (commas, conjunctions)
-                parts = re.split(r'[,;]|\s+(?:and|but|or|so|yet|for)\s+', sentence)
-                for part in parts:
-                    if part.strip():
-                        chunks.append(part.strip())
-        
-        return chunks
-    
-    def _calculate_chunk_duration(self, word_count):
-        """Calculate how long to show a chunk based on natural speech speed"""
-        speaking_speed = 3.0  # words per second (natural speech)
-        min_duration = 1.5
-        max_duration = 4.0
-        
-        base_time = word_count / speaking_speed
-        return max(min_duration, min(max_duration, base_time))
+
     
     def _draw_live_caption_overlay(self, frame):
-        """Draw live captioning-style overlay with organic chunk progression and 4-second max display"""
+        """Draw chunked subtitle overlay with organic pacing - smarter chunking"""
         current_time = time.time()
         
         with self.subtitle_lock:
@@ -380,34 +351,29 @@ class EmbodiedAI:
             # Calculate how long current chunk has been displayed
             chunk_display_time = current_time - self.last_chunk_change_time
             
-            # Hide chunk after 4 seconds maximum (important silence periods)
-            if chunk_display_time >= 4.0:
-                if not self.in_silence_period:
-                    # Just entered silence period
-                    self.in_silence_period = True
-                    self.silence_start_time = current_time
-                    if DEBUG_CAMERA:
-                        print(f"🔇 Entering silence period...")
-                elif DEBUG_CAMERA:
-                    # Show countdown timer (update in place)
-                    silence_duration = current_time - self.silence_start_time
-                    # No specific end time for silence, just show duration
-                    print(f"\r🔇 Silence: {silence_duration:.1f}s", end="", flush=True)
-                return frame  # Show blank space - silence is important
+            # Show silence ONLY after ALL chunks complete (not during caption)
+            if self.current_chunk_index >= len(self.subtitle_chunks) - 1:
+                # On last chunk - show longer, then silence
+                if chunk_display_time >= self.chunk_display_duration:
+                    if not self.in_silence_period:
+                        # Just finished last chunk - enter silence
+                        self.in_silence_period = True
+                        self.silence_start_time = current_time
+                        if DEBUG_CAMERA:
+                            print(f"🔇 Entering silence period...")
+                    elif DEBUG_CAMERA:
+                        # Show countdown timer
+                        silence_duration = current_time - self.silence_start_time
+                        print(f"\r🔇 Silence: {silence_duration:.1f}s", end="", flush=True)
+                    return frame  # Blank space after caption completes
             
-            # Check if it's time to advance to next chunk (but only if we haven't hit 4-second limit)
+            # Check if it's time to advance to next chunk
             if (chunk_display_time >= self.chunk_display_duration and 
                 self.current_chunk_index < len(self.subtitle_chunks) - 1):
                 
                 # Advance to next chunk
                 self.current_chunk_index += 1
                 self.last_chunk_change_time = current_time
-                
-                # Reset silence period when new content appears
-                if self.in_silence_period:
-                    self.in_silence_period = False
-                    if DEBUG_CAMERA:
-                        print()  # New line after silence timer
                 
                 # Calculate duration for new chunk
                 if self.current_chunk_index < len(self.subtitle_chunks):
@@ -418,7 +384,7 @@ class EmbodiedAI:
                     if DEBUG_CAMERA:
                         print(f"🎬 Next chunk: {word_count} words, {self.chunk_display_duration:.1f}s -> {chunk}")
             
-            # Get current chunk to display (only if within 4-second window)
+            # Get current chunk to display
             current_chunk = self.subtitle_chunks[self.current_chunk_index]
         
         # Draw subtitle overlay (legacy-style: smaller, fitted background)
@@ -471,6 +437,57 @@ class EmbodiedAI:
         
         return frame
 
+    def _create_smart_chunks(self, text):
+        """Break text into natural chunks for organic pacing (10-20 words each)"""
+        import re
+        
+        # Split into sentences using regex
+        sentences = re.split(r'[.!?]+', text)
+        sentences = [s.strip() for s in sentences if s.strip()]
+        
+        chunks = []
+        for sentence in sentences:
+            words = sentence.split()
+            word_count = len(words)
+            
+            # Keep sentences under 20 words intact
+            if word_count <= 20:
+                chunks.append(sentence)
+            else:
+                # Split longer sentences at natural breaks (commas, conjunctions)
+                # Aim for 10-20 word chunks
+                parts = re.split(r'[,;]|\s+(?:and|but|or|so|yet|for)\s+', sentence)
+                
+                current_chunk = []
+                for part in parts:
+                    part_words = part.strip().split()
+                    
+                    # If adding this part keeps us under 20 words, add it
+                    if len(current_chunk) + len(part_words) <= 20:
+                        current_chunk.extend(part_words)
+                    else:
+                        # Flush current chunk if it has content
+                        if current_chunk:
+                            chunks.append(' '.join(current_chunk))
+                            current_chunk = []
+                        # Start new chunk with this part
+                        current_chunk = part_words
+                
+                # Add remaining words
+                if current_chunk:
+                    chunks.append(' '.join(current_chunk))
+        
+        return chunks if chunks else [text]  # Fallback to full text
+    
+    def _calculate_chunk_duration(self, word_count):
+        """Calculate how long to show a chunk - more generous timing"""
+        reading_speed = 2.5  # words per second (comfortable reading)
+        min_duration = 2.0   # At least 2 seconds
+        max_duration = 6.0   # Up to 6 seconds
+        
+        base_time = word_count / reading_speed
+        return max(min_duration, min(max_duration, base_time))
+    
     def _update_motor_control(self, current_time):
         """Update motor control based on personality state"""
         try:

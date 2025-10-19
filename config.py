@@ -9,8 +9,9 @@ CAMERA_FPS = 30
 
 # AI Settings
 OLLAMA_URL = "http://localhost:11434"
-OLLAMA_MODEL = "llava:7b-v1.6-mistral-q5_1"  # Custom 7B LLaVA/Mistral hybrid model
-AI_PROCESS_INTERVAL = 3.0  # seconds between AI processing (7B + optimized prompts = much faster)
+OLLAMA_MODEL = "minicpm-v:8b"  # Primary consciousness - vision + complex reasoning
+SUBCONSCIOUS_MODEL = "smollm2:1.7b"  # Language subconscious - pure text thoughts
+AI_PROCESS_INTERVAL = 7.0  # seconds between AI processing - allow full subtitle display cycle
 USE_SOPHISTICATED_PROMPTS = False  # Testing hybrid focus-aware legacy system
 OLLAMA_TIMEOUT = 120  # seconds - increase for complex prompts
 
