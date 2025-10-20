@@ -28,8 +28,28 @@ from thermal_integration import create_thermal_printer
 from config import (
     AI_PROCESS_INTERVAL, DEBUG_CAMERA, DEBUG_AI, DEBUG_MOTOR,
     VERBOSE_OUTPUT, CAMERA_WIDTH, CAMERA_HEIGHT, SHOW_CAMERA_PREVIEW,
-    PREVIEW_WIDTH, PREVIEW_HEIGHT, THERMAL_PRINTER_ENABLED
+    PREVIEW_WIDTH, PREVIEW_HEIGHT, THERMAL_PRINTER_ENABLED,
+    VOICE_ENABLED, VOICE_ENGINE, VOICE_MODEL, VOICE_ALL_THOUGHTS, VOICE_INTERVAL,
+    WINDOWS_TTS_RATE, WINDOWS_TTS_VOLUME, WINDOWS_TTS_GENDER,
+    ESPEAK_VOICE, ESPEAK_SPEED, ESPEAK_PITCH
 )
+
+# Import voice system (optional)
+VOICE_AVAILABLE = False
+if VOICE_ENABLED:
+    try:
+        if VOICE_ENGINE == "espeak":
+            from espeak_tts_simple import ESpeakTTS as VoiceSystem
+            VOICE_AVAILABLE = True
+        elif VOICE_ENGINE == "windows":
+            from windows_tts import WindowsTTS as VoiceSystem
+            VOICE_AVAILABLE = True
+        else:  # piper
+            from voice import VoiceSystem
+            VOICE_AVAILABLE = True
+    except ImportError as e:
+        print(f"⚠️ Voice system not available: {e}")
+        VOICE_AVAILABLE = False
 
 def clear_print_queue_preemptive():
     """Clear Windows print queue aggressively with admin elevation"""
@@ -96,11 +116,13 @@ class EmbodiedAI:
         self.personality = None
         self.hand_control = None
         self.thermal_printer = None
+        self.voice_system = None
         
         # Timing controls - avoid threading issues
         self.last_ai_process_time = 0
         self.last_motor_update_time = 0
         self.last_status_time = 0
+        self.last_voice_time = 0  # Track last voice output
         self.ai_processing_lock = threading.Lock()  # Prevent concurrent AI processing
         
         # Frame processing
@@ -160,6 +182,62 @@ class EmbodiedAI:
             print("🖨️ Initializing thermal printer...")
             self.thermal_printer = create_thermal_printer(enabled=THERMAL_PRINTER_ENABLED)
             self.thermal_printer.start()
+
+            # Initialize voice system (optional)
+            if VOICE_ENABLED and VOICE_AVAILABLE:
+                print("🔊 Initializing voice system...")
+                
+                if VOICE_ENGINE == "espeak":
+                    # eSpeak TTS with whisper
+                    try:
+                        self.voice_system = VoiceSystem(
+                            voice=ESPEAK_VOICE.split('+')[0],  # Base voice (e.g., "en-us")
+                            speed=ESPEAK_SPEED,
+                            pitch=ESPEAK_PITCH,
+                            use_whisper='+whisper' in ESPEAK_VOICE
+                        )
+                        print(f"✅ eSpeak TTS ready (voice: {ESPEAK_VOICE}, {ESPEAK_SPEED} wpm)")
+                        if VOICE_ALL_THOUGHTS:
+                            print("   🎙️ Voice mode: EVERY thought")
+                        else:
+                            print(f"   🎙️ Voice mode: Every {VOICE_INTERVAL}s")
+                    except Exception as e:
+                        print(f"⚠️ eSpeak TTS disabled: {e}")
+                        self.voice_system = None
+                        
+                elif VOICE_ENGINE == "windows":
+                    # Windows TTS
+                    self.voice_system = VoiceSystem()
+                    if self.voice_system.start():
+                        self.voice_system.set_rate(WINDOWS_TTS_RATE)
+                        self.voice_system.set_volume(WINDOWS_TTS_VOLUME)
+                        self.voice_system.set_voice_gender(WINDOWS_TTS_GENDER)
+                        
+                        print(f"✅ Windows TTS ready ({WINDOWS_TTS_GENDER}, {WINDOWS_TTS_RATE} wpm)")
+                        if VOICE_ALL_THOUGHTS:
+                            print("   🎙️ Voice mode: EVERY thought")
+                        else:
+                            print(f"   🎙️ Voice mode: Every {VOICE_INTERVAL}s")
+                    else:
+                        print("⚠️ Windows TTS disabled (not available)")
+                        self.voice_system = None
+                else:
+                    # Piper TTS
+                    self.voice_system = VoiceSystem(VOICE_MODEL)
+                    if self.voice_system.start():
+                        print(f"✅ Piper TTS ready (model: {VOICE_MODEL})")
+                        if VOICE_ALL_THOUGHTS:
+                            print("   🎙️ Voice mode: EVERY thought")
+                        else:
+                            print(f"   🎙️ Voice mode: Every {VOICE_INTERVAL}s")
+                    else:
+                        print("⚠️ Piper TTS disabled (not found)")
+                        self.voice_system = None
+            else:
+                if VOICE_ENABLED:
+                    print("🔇 Voice system disabled (not available)")
+                else:
+                    print("🔇 Voice system disabled (config)")
 
             # Initialize hand control
             if DEBUG_MOTOR:
@@ -278,19 +356,34 @@ class EmbodiedAI:
                 if DEBUG_AI:
                     print(f"🎯 AI returned response: {response[:100]}{'...' if len(response) > 100 else ''}")
                 
-                # Clean caption (no truncation!)
+                # Clean caption - remove debug markers and system text
+                import re
                 clean_caption = response.strip()
-                if clean_caption.lower().startswith("caption:"):
-                    clean_caption = clean_caption[len("caption:"):].strip()
+                
+                # Light cleaning - just remove obvious prefixes
+                prefixes_to_remove = ["caption:", "my thought:"]
+                for prefix in prefixes_to_remove:
+                    if clean_caption.lower().startswith(prefix):
+                        clean_caption = clean_caption[len(prefix):].strip()
+                
+                # Remove any bracketed metadata (already done in personality.py but just in case)
+                clean_caption = re.sub(r'\[(?:Tone|Internal|System|Visual)[^\]]*\]', '', clean_caption, flags=re.IGNORECASE)
+                
+                # Remove debug markers that might slip through
+                clean_caption = re.sub(r'(🎯|🧹|🚫|🔄|✅|👁️|🧠|🎭|💭|🖨️|📝)', '', clean_caption)
+                
+                # Clean up extra whitespace
+                clean_caption = ' '.join(clean_caption.split())
+                clean_caption = clean_caption.strip()
                 
                 if DEBUG_AI:
                     print(f"🧹 Cleaned caption: {clean_caption[:100]}{'...' if len(clean_caption) > 100 else ''}")
                 
-                # Thread-safe subtitle update - create smarter chunks
+                # Thread-safe live captioning subtitle update
                 with self.subtitle_lock:
                     self.current_subtitle = clean_caption
                     
-                    # Create smarter chunks (10-20 words, natural breaks)
+                    # Create sentence-based chunks (like live captioning)
                     self.subtitle_chunks = self._create_smart_chunks(clean_caption)
                     
                     # Reset to first chunk
@@ -304,15 +397,15 @@ class EmbodiedAI:
                         if DEBUG_CAMERA:
                             print()  # New line after silence timer
                     
-                    # Calculate duration for first chunk
+                    # Calculate dynamic duration for first chunk
                     if self.subtitle_chunks:
                         first_chunk = self.subtitle_chunks[0]
                         word_count = len(first_chunk.split())
                         self.chunk_display_duration = self._calculate_chunk_duration(word_count)
                 
-                # Show output with timestamp
+                # Show output with timestamp (clean, simple)
                 timestamp_str = time.strftime("%H:%M:%S")
-                print(f"[{timestamp_str}] {clean_caption}")
+                print(f"\n[{timestamp_str}] 💭 {clean_caption}\n")
 
                 # Send to thermal printer for rhythmic printing
                 if self.thermal_printer:
@@ -323,10 +416,24 @@ class EmbodiedAI:
                     if DEBUG_AI:
                         print(f"❌ No thermal printer available")
 
-                if self.subtitle_chunks:
-                    chunk_count = len(self.subtitle_chunks)
-                    word_count = len(clean_caption.split())
-                    print(f"[{timestamp_str}] 💭 New thought: {word_count} words in {chunk_count} chunks")
+                # Send to voice system (optional)
+                if self.voice_system:
+                    current_time = time.time()
+                    should_speak = False
+                    
+                    if VOICE_ALL_THOUGHTS:
+                        # Speak every thought
+                        should_speak = True
+                    else:
+                        # Speak every VOICE_INTERVAL seconds
+                        if current_time - self.last_voice_time >= VOICE_INTERVAL:
+                            should_speak = True
+                            self.last_voice_time = current_time
+                    
+                    if should_speak:
+                        if DEBUG_AI:
+                            print(f"🎙️ Queueing for voice: {clean_caption[:50]}...")
+                        self.voice_system.speak(clean_caption)
         
         except Exception as e:
             if DEBUG_AI:
@@ -338,10 +445,58 @@ class EmbodiedAI:
             if DEBUG_AI:
                 print(f"🔓 AI processing lock released")
     
-
+    def _create_smart_chunks(self, text):
+        """Break text into sentence-based chunks for live captioning flow"""
+        import re
+        
+        # Split into sentences using regex (more robust than simple punctuation)
+        sentences = re.split(r'[.!?]+', text)
+        sentences = [s.strip() for s in sentences if s.strip()]
+        
+        chunks = []
+        for sentence in sentences:
+            # Don't split sentences that are reasonable length (max ~10 words for comfortable reading)
+            if len(sentence.split()) <= 10:
+                chunks.append(sentence)
+            else:
+                # Split long sentences at natural breaks - use finditer to preserve text
+                # Look for commas, semicolons, or conjunctions
+                split_pattern = r'[,;]|\s+(?:and|but|or|so|yet|for)\s+'
+                last_end = 0
+                parts = []
+                
+                for match in re.finditer(split_pattern, sentence):
+                    # Get text before the delimiter
+                    part = sentence[last_end:match.start()].strip()
+                    if part:
+                        parts.append(part)
+                    last_end = match.end()
+                
+                # Add remaining text after last delimiter
+                if last_end < len(sentence):
+                    part = sentence[last_end:].strip()
+                    if part:
+                        parts.append(part)
+                
+                # If we got parts, use them; otherwise keep whole sentence
+                if parts:
+                    chunks.extend(parts)
+                else:
+                    chunks.append(sentence)
+        
+        return chunks
+    
+    def _calculate_chunk_duration(self, word_count):
+        """Calculate how long to show a chunk based on comfortable reading speed"""
+        speaking_speed = 3.5  # words per second (comfortable reading pace)
+        min_duration = 1.5
+        max_duration = 3.5
+        
+        base_time = word_count / speaking_speed
+        return max(min_duration, min(max_duration, base_time))
     
     def _draw_live_caption_overlay(self, frame):
-        """Draw chunked subtitle overlay with organic pacing - smarter chunking"""
+        """Draw live captioning-style overlay with organic chunk progression and 4-second max display"""
         current_time = time.time()
         
         with self.subtitle_lock:
@@ -351,29 +506,34 @@ class EmbodiedAI:
             # Calculate how long current chunk has been displayed
             chunk_display_time = current_time - self.last_chunk_change_time
             
-            # Show silence ONLY after ALL chunks complete (not during caption)
-            if self.current_chunk_index >= len(self.subtitle_chunks) - 1:
-                # On last chunk - show longer, then silence
-                if chunk_display_time >= self.chunk_display_duration:
-                    if not self.in_silence_period:
-                        # Just finished last chunk - enter silence
-                        self.in_silence_period = True
-                        self.silence_start_time = current_time
-                        if DEBUG_CAMERA:
-                            print(f"🔇 Entering silence period...")
-                    elif DEBUG_CAMERA:
-                        # Show countdown timer
-                        silence_duration = current_time - self.silence_start_time
-                        print(f"\r🔇 Silence: {silence_duration:.1f}s", end="", flush=True)
-                    return frame  # Blank space after caption completes
+            # Hide chunk after 6 seconds maximum (longer for reading)
+            if chunk_display_time >= 6.0:
+                if not self.in_silence_period:
+                    # Just entered silence period
+                    self.in_silence_period = True
+                    self.silence_start_time = current_time
+                    if DEBUG_CAMERA:
+                        print(f"🔇 Entering silence period...")
+                elif DEBUG_CAMERA:
+                    # Show countdown timer (update in place)
+                    silence_duration = current_time - self.silence_start_time
+                    # No specific end time for silence, just show duration
+                    print(f"\r🔇 Silence: {silence_duration:.1f}s", end="", flush=True)
+                return frame  # Show blank space - silence is important
             
-            # Check if it's time to advance to next chunk
+            # Check if it's time to advance to next chunk (but only if we haven't hit 4-second limit)
             if (chunk_display_time >= self.chunk_display_duration and 
                 self.current_chunk_index < len(self.subtitle_chunks) - 1):
                 
                 # Advance to next chunk
                 self.current_chunk_index += 1
                 self.last_chunk_change_time = current_time
+                
+                # Reset silence period when new content appears
+                if self.in_silence_period:
+                    self.in_silence_period = False
+                    if DEBUG_CAMERA:
+                        print()  # New line after silence timer
                 
                 # Calculate duration for new chunk
                 if self.current_chunk_index < len(self.subtitle_chunks):
@@ -384,7 +544,7 @@ class EmbodiedAI:
                     if DEBUG_CAMERA:
                         print(f"🎬 Next chunk: {word_count} words, {self.chunk_display_duration:.1f}s -> {chunk}")
             
-            # Get current chunk to display
+            # Get current chunk to display (only if within 4-second window)
             current_chunk = self.subtitle_chunks[self.current_chunk_index]
         
         # Draw subtitle overlay (legacy-style: smaller, fitted background)
@@ -437,57 +597,6 @@ class EmbodiedAI:
         
         return frame
 
-    def _create_smart_chunks(self, text):
-        """Break text into natural chunks for organic pacing (10-20 words each)"""
-        import re
-        
-        # Split into sentences using regex
-        sentences = re.split(r'[.!?]+', text)
-        sentences = [s.strip() for s in sentences if s.strip()]
-        
-        chunks = []
-        for sentence in sentences:
-            words = sentence.split()
-            word_count = len(words)
-            
-            # Keep sentences under 20 words intact
-            if word_count <= 20:
-                chunks.append(sentence)
-            else:
-                # Split longer sentences at natural breaks (commas, conjunctions)
-                # Aim for 10-20 word chunks
-                parts = re.split(r'[,;]|\s+(?:and|but|or|so|yet|for)\s+', sentence)
-                
-                current_chunk = []
-                for part in parts:
-                    part_words = part.strip().split()
-                    
-                    # If adding this part keeps us under 20 words, add it
-                    if len(current_chunk) + len(part_words) <= 20:
-                        current_chunk.extend(part_words)
-                    else:
-                        # Flush current chunk if it has content
-                        if current_chunk:
-                            chunks.append(' '.join(current_chunk))
-                            current_chunk = []
-                        # Start new chunk with this part
-                        current_chunk = part_words
-                
-                # Add remaining words
-                if current_chunk:
-                    chunks.append(' '.join(current_chunk))
-        
-        return chunks if chunks else [text]  # Fallback to full text
-    
-    def _calculate_chunk_duration(self, word_count):
-        """Calculate how long to show a chunk - more generous timing"""
-        reading_speed = 2.5  # words per second (comfortable reading)
-        min_duration = 2.0   # At least 2 seconds
-        max_duration = 6.0   # Up to 6 seconds
-        
-        base_time = word_count / reading_speed
-        return max(min_duration, min(max_duration, base_time))
-    
     def _update_motor_control(self, current_time):
         """Update motor control based on personality state"""
         try:
@@ -544,6 +653,10 @@ class EmbodiedAI:
             if self.thermal_printer:
                 self.thermal_printer.stop()
                 print("🖨️ Thermal printer stopped")
+
+            if self.voice_system:
+                self.voice_system.stop()
+                print("🔇 Voice system stopped")
 
             if self.hand_control:
                 self.hand_control.cleanup()

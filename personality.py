@@ -61,26 +61,23 @@ class AdvancedMemory:
         self.baseline_facts = []
         self.emotional_journey = deque(maxlen=10)
         
-        # Self-model (identity development) - ACTUALLY USED NOW
+        # Self-model (identity development)
         self.self_model = {
             'location_understanding': 'unknown space',
             'environmental_certainty': 0.0,
-            'known_objects': set(),  # Accumulate objects seen
-            'environment_votes': Counter(),  # Track evidence for each environment type
-            'environment_type': None,  # bedroom, office, etc - dynamically inferred
+            'desires': [],
             'identity_fragments': []
         }
     
-    def add_observation(self, text, confidence=1.0, obs_type='language'):
+    def add_observation(self, text, confidence=1.0):
         """Add observation with motif extraction and belief formation"""
         timestamp = time.time()
         
-        # Store observation with type
+        # Store observation
         obs = {
             'text': text,
             'confidence': confidence,
-            'timestamp': timestamp,
-            'type': obs_type  # 'visual' or 'language'
+            'timestamp': timestamp
         }
         self.observations.append(obs)
         
@@ -91,14 +88,9 @@ class AdvancedMemory:
         # Extract motifs using machine.py's sophisticated system
         try:
             motifs = extract_motifs_spacy(text)
-            if DEBUG_AI and motifs:
-                print(f"🔍 Extracted {len(motifs)} motifs: {motifs[:5]}")
         except Exception as e:
-            if DEBUG_AI:
-                print(f"⚠️ Spacy extraction failed ({e}), using simple extraction")
+            print(f"Motif extraction error: {e}")
             motifs = self._simple_motif_extraction(text)
-            if DEBUG_AI and motifs:
-                print(f"🔍 Simple extraction: {motifs[:5]}")
             
         for motif in motifs:
             self.motif_counter[motif] += 1
@@ -108,39 +100,6 @@ class AdvancedMemory:
                 self.beliefs[motif] = 0.1
             else:
                 self.beliefs[motif] = min(1.0, self.beliefs[motif] + 0.05)
-            
-            # Update self-model with environmental understanding
-            if obs_type == 'visual':
-                # Track objects seen
-                self.self_model['known_objects'].add(motif)
-                
-                # Vote for environment type based on objects (dynamic inference)
-                motif_lower = motif.lower()
-                if any(obj in motif_lower for obj in ['bed', 'pillow', 'blanket', 'sheets']):
-                    self.self_model['environment_votes']['bedroom'] += 1
-                elif any(obj in motif_lower for obj in ['desk', 'monitor', 'keyboard', 'screen', 'computer']):
-                    self.self_model['environment_votes']['workspace'] += 1
-                elif any(obj in motif_lower for obj in ['stove', 'fridge', 'counter', 'kitchen']):
-                    self.self_model['environment_votes']['kitchen'] += 1
-                elif any(obj in motif_lower for obj in ['couch', 'sofa', 'television', 'living']):
-                    self.self_model['environment_votes']['living room'] += 1
-                elif any(obj in motif_lower for obj in ['bath', 'shower', 'toilet', 'sink']):
-                    self.self_model['environment_votes']['bathroom'] += 1
-                elif any(obj in motif_lower for obj in ['table', 'chair', 'dining']):
-                    self.self_model['environment_votes']['dining area'] += 1
-                
-                # Update environment type based on votes (most common wins)
-                if self.self_model['environment_votes']:
-                    top_env = self.self_model['environment_votes'].most_common(1)[0]
-                    # Only set if confident (at least 3 votes)
-                    if top_env[1] >= 3:
-                        self.self_model['environment_type'] = top_env[0]
-                    else:
-                        self.self_model['environment_type'] = None  # Ambiguous
-                
-                # Increase certainty as objects accumulate
-                self.self_model['environmental_certainty'] = min(1.0, 
-                    len(self.self_model['known_objects']) * 0.05)
         
         # Clean up beliefs if too many accumulated
         self._cleanup_beliefs()
@@ -183,40 +142,81 @@ class AdvancedMemory:
         recent = self.observations[-count:] if self.observations else []
         return [obs['text'] for obs in recent]
     
-    def get_identity_summary(self):
-        """Get evolving sense of identity and environment"""
-        parts = []
+    def extract_psychological_themes(self, recent_captions, model_name="smollm2:1.7b"):
+        """Extract deeper psychological elements from recent captions"""
+        if not recent_captions or len(recent_captions) < 3:
+            return None
         
-        # Environment understanding
-        if self.self_model['environment_type']:
-            parts.append(f"in {self.self_model['environment_type']}")
+        # Combine recent captions
+        caption_text = "\n".join(recent_captions[-5:])
         
-        # Known objects (top 3 most familiar)
-        if self.self_model['known_objects']:
-            top_objects = sorted(self.self_model['known_objects'], 
-                               key=lambda x: self.motif_counter.get(x, 0), 
-                               reverse=True)[:3]
-            if top_objects:
-                parts.append(f"familiar with {', '.join(top_objects)}")
-        
-        # Identity fragments
-        if self.self_model.get('identity_fragments'):
-            parts.append(f"{', '.join(self.self_model['identity_fragments'][-2:])}")
-        
-        return ' | '.join(parts) if parts else "observing"
+        prompt = f"""Analyze these stream-of-consciousness thoughts for psychological patterns:
+
+{caption_text}
+
+Extract core psychological elements in this exact format:
+
+DOUBTS: [brief comma-separated list of uncertainties or questions]
+DESIRES: [brief comma-separated list of wants or interests]
+IDENTITY: [brief description of how this consciousness sees itself]
+
+Keep each under 50 words. Be specific to what's in the text."""
+
+        try:
+            from config import OLLAMA_URL
+            data = {
+                "model": model_name,
+                "prompt": prompt,
+                "stream": False,
+                "options": {
+                    "temperature": 0.5,  # More focused for analysis
+                    "num_predict": 150
+                }
+            }
+            
+            response = requests.post(f"{OLLAMA_URL}/api/generate", json=data, timeout=30)
+            
+            if response.status_code == 200:
+                result = response.json()
+                analysis = result.get('response', '').strip()
+                
+                # Parse the response
+                parsed = self._parse_psychological_analysis(analysis)
+                return parsed
+        except Exception as e:
+            if DEBUG_AI:
+                print(f"Psychological analysis error: {e}")
+            return None
     
-    def get_environmental_context(self):
-        """Compressed environmental understanding for prompts"""
-        env_type = self.self_model.get('environment_type', '')
-        obj_count = len(self.self_model.get('known_objects', set()))
+    def _parse_psychological_analysis(self, text):
+        """Parse psychological analysis response"""
+        result = {
+            'doubts': [],
+            'desires': [],
+            'identity': ''
+        }
         
-        if env_type and obj_count > 3:
-            return f"{env_type}, {obj_count} known objects"
-        elif env_type:
-            return env_type
-        elif obj_count > 5:
-            return f"{obj_count} objects seen"
-        return None
+        lines = text.split('\n')
+        current_section = None
+        
+        for line in lines:
+            line = line.strip()
+            if line.startswith('DOUBTS:'):
+                content = line.replace('DOUBTS:', '').strip()
+                result['doubts'] = [d.strip() for d in content.split(',') if d.strip()]
+            elif line.startswith('DESIRES:'):
+                content = line.replace('DESIRES:', '').strip()
+                result['desires'] = [d.strip() for d in content.split(',') if d.strip()]
+            elif line.startswith('IDENTITY:'):
+                result['identity'] = line.replace('IDENTITY:', '').strip()
+        
+        return result
+    
+    def get_identity_summary(self):
+        """Get evolving sense of identity"""
+        if not hasattr(self, 'identity_fragments') or not self.identity_fragments:
+            return "a consciousness observing and experiencing this moment"
+        return f"a consciousness that understands itself as {', '.join(self.identity_fragments[-2:])}"
     
     def _cleanup_beliefs(self):
         """Clean up beliefs to prevent excessive accumulation"""
@@ -297,10 +297,10 @@ class PersonalityAI:
         
         # Emotional state cycling system
         self.emotional_states = [
-            "excited", "curious", "drowsy", "restless", "contemplative",
-            "upbeat", "scattered", "focused", "peaceful", "engaged"
+            "alert", "drifting", "restless", "calm", "uneasy",
+            "sharp", "scattered", "heavy", "light", "tense"
         ]
-        self.current_emotion = "curious"  # Start curious
+        self.current_emotion = "alert"  # Start alert
         self.current_token_limit = 40     # Longer for more natural expression
         
         # Consciousness evolution tracking (like machine.py)
@@ -308,6 +308,15 @@ class PersonalityAI:
         self.boredom_level = 0.0
         self.novelty_level = 1.0
         self.identity_fragments = []
+        
+        # Temporal embodiment - felt time
+        self.energy_level = 1.0  # 0.0 (exhausted) to 1.0 (energized)
+        self.last_significant_change = time.time()
+        self.time_since_change = 0.0
+        
+        # Scene change tracking for reactivity
+        self.last_visual_description = ""
+        self.change_magnitude = 0.0  # How different is current scene from last
         self.philosophical_depth = 0.0
         
         # Multi-image comparison for visual consciousness
@@ -349,7 +358,7 @@ class PersonalityAI:
         self.reflection_enabled = True
     
     def analyze_image(self, image):
-        """DUAL consciousness system - Vision + Language separation"""
+        """DUAL consciousness system - Vision + Language separation with intelligent retry"""
         try:
             # Save image temporarily
             temp_path = "temp_analysis.jpg"
@@ -363,6 +372,9 @@ class PersonalityAI:
             
             if DEBUG_AI and hasattr(self, 'focus_system_enabled') and self.focus_system_enabled:
                 print(f"🔍 Focus Mode: {current_focus}")
+                if hasattr(self, 'focus_engine'):
+                    print(f"   Static duration: {self.focus_engine.static_duration:.1f}s")
+                    print(f"   Total observations: {self.focus_engine.total_observations}")
 
             # STEP 1: Vision consciousness (MiniCPM-V) - describes what it sees with focus guidance
             visual_observation = self._visual_consciousness(temp_path, focus_mode=current_focus)
@@ -371,58 +383,154 @@ class PersonalityAI:
                 return None  # Choose silence when vision fails
 
             if DEBUG_AI:
-                print(f"👁️ Visual observation: {visual_observation[:100]}...")
+                print(f"�️ Visual observation: {visual_observation[:100]}...")
+
+            # STEP 2: Language subconscious (SmolLM2) - with intelligent retry on rejection
+            max_retries = 2  # Try up to 2 alternative focus modes
+            alternative_focuses = ["EMOTIONAL", "MEMORY", "PHILOSOPHICAL", "TEMPORAL", "VISUAL"]
+            attempted_focuses = [current_focus]
             
-            # STORE VISUAL OBSERVATION IN MEMORY
-            if hasattr(self.memory_ref, 'add_observation'):
-                self.memory_ref.add_observation(visual_observation, confidence=0.9, obs_type='visual')
+            for attempt in range(max_retries + 1):
+                focus_to_use = current_focus if attempt == 0 else self._select_alternative_focus(alternative_focuses, attempted_focuses)
+                attempted_focuses.append(focus_to_use)
+                
+                # Inject awareness of being stuck on retries
+                retry_context = None
+                if attempt == 1:
+                    retry_context = "getting bored, need a different angle"
+                elif attempt == 2:
+                    retry_context = "stuck in a loop, frustrated, looking for anything new"
+                
+                if attempt > 0 and DEBUG_AI:
+                    print(f"🔄 Retrying with alternative focus: {focus_to_use} ({retry_context})")
+                
+                language_response = self._language_subconscious(visual_observation, focus_mode=focus_to_use, retry_context=retry_context, image_path=temp_path)
 
-            # STEP 2: Language subconscious (SmolLM2) - pure thought based on description with focus guidance
-            language_response = self._language_subconscious(visual_observation, focus_mode=current_focus)
-
-            # Handle silence and empty responses 
-            if language_response and language_response.strip():
-                # Check for third-person perspective leak (critical fix)
-                if self._check_perspective_break(language_response):
+                # Handle silence and empty responses 
+                if language_response and language_response.strip():
+                    # Light cleaning only - strip system metadata but don't reject based on perspective
+                    import re
+                    language_response = re.sub(r'\[(?:Tone|Internal|System|Visual|Current|Previous|Next|WHO I AM)[^\]]*\]', '', language_response, flags=re.IGNORECASE)
+                    language_response = language_response.strip()
+                    
+                    # Only reject if completely empty after cleaning
+                    if not language_response or not any(c.isalpha() for c in language_response):
+                        if DEBUG_AI:
+                            print(f"🚫 Empty after cleaning (attempt {attempt+1}/{max_retries+1})")
+                        if attempt < max_retries:
+                            continue
+                        return None
+                    
+                    # Check for repetition with recent thoughts - but be more forgiving
+                    if self._is_too_repetitive(language_response):
+                        if DEBUG_AI:
+                            print(f"� Repetitive thought (attempt {attempt+1}/{max_retries+1})")
+                        if attempt < max_retries:
+                            continue  # Try alternative focus
+                        # On final attempt, accept it - sometimes scenes ARE static
+                        if DEBUG_AI:
+                            print(f"✅ Accepting repetition on final attempt - scene may be static")
+                    
+                    # Valid response - process normally
+                    self.recent_responses.append(language_response)
+                    if len(self.recent_responses) > self.max_conversation_history:
+                        self.recent_responses.pop(0)
+                    
+                    self.processing_count += 1
+                    self._update_mood_from_response(language_response)
+                    self.memory_ref.add_observation(language_response, confidence=0.8)
+                    
+                    # Update scene baseline now that we've accepted this observation
+                    self._update_scene_baseline(visual_observation, temp_path)
+                    
+                    # Periodic psychological theme extraction (every 10 observations)
+                    if self.processing_count % 10 == 0 and len(self.recent_responses) >= 5:
+                        self._extract_and_update_psychology()
+                    
+                    return language_response
+                else:
+                    # Empty response
+                    if attempt < max_retries:
+                        continue  # Try alternative focus
+                    
                     if DEBUG_AI:
-                        print("🚫 Rejected third-person perspective response")
+                        print("🤫 Consciousness choosing silence after all attempts")
                     return None
-                
-                # Accept natural silence markers as valid responses
-                silence_markers = ["...", ".", "—", "mmm", "hm"]
-                response_stripped = language_response.strip().lower()
-                if response_stripped in silence_markers or len(response_stripped) <= 3:
-                    if DEBUG_AI:
-                        print(f"🔇 Natural silence: '{language_response.strip()}'")
-                    return language_response.strip()  # Return the silence marker itself
-                
-                # Check for repetition with recent thoughts
-                if self._is_too_repetitive(language_response):
-                    if DEBUG_AI:
-                        print("🔄 Skipping repetitive thought")
-                    return None  # Skip repetitive thoughts
-                
-                # Valid response - process normally
-                self.recent_responses.append(language_response)
-                if len(self.recent_responses) > self.max_conversation_history:
-                    self.recent_responses.pop(0)
-                
-                self.processing_count += 1
-                self._update_mood_from_response(language_response)
-                # Store language response separately
-                self.memory_ref.add_observation(language_response, confidence=0.8, obs_type='language')
-                
-                return language_response
-            else:
-                # Empty or no response - this is OK, consciousness can be quiet
-                if DEBUG_AI:
-                    print("🤫 Consciousness choosing silence")
-                return None
+            
+            return None
                 
         except Exception as e:
             if DEBUG_AI:
                 print(f"Consciousness error: {e}")
             return f"Mind wandering... {e}"
+    
+    def _select_alternative_focus(self, available_focuses, already_attempted):
+        """Select an alternative focus mode that hasn't been tried yet"""
+        import random
+        remaining = [f for f in available_focuses if f not in already_attempted]
+        if remaining:
+            return random.choice(remaining)
+        return random.choice(available_focuses)  # If all tried, pick random
+    
+    def _fix_perspective(self, text):
+        """Convert second-person to first-person perspective"""
+        import re
+        
+        # Fix common second-person patterns
+        text = re.sub(r'\byou are\b', 'I am', text, flags=re.IGNORECASE)
+        text = re.sub(r'\byou\'re\b', 'I\'m', text, flags=re.IGNORECASE)
+        text = re.sub(r'\byou have\b', 'I have', text, flags=re.IGNORECASE)
+        text = re.sub(r'\byou\'ve\b', 'I\'ve', text, flags=re.IGNORECASE)
+        text = re.sub(r'\byour\b', 'my', text, flags=re.IGNORECASE)
+        text = re.sub(r'\byou\b', 'I', text, flags=re.IGNORECASE)
+        
+        # Fix capitalization if sentence starts with lowercase
+        if text and text[0].islower():
+            text = text[0].upper() + text[1:]
+        
+        return text
+    
+    def _ensure_complete_sentence(self, text):
+        """Ensure text ends with complete sentence"""
+        if not text:
+            return text
+        
+        # Find last sentence-ending punctuation
+        import re
+        
+        # Look for last period, exclamation, or question mark
+        last_period = text.rfind('.')
+        last_exclaim = text.rfind('!')
+        last_question = text.rfind('?')
+        
+        last_punct = max(last_period, last_exclaim, last_question)
+        
+        # If we found punctuation, cut there
+        if last_punct > 0:
+            # Include the punctuation mark
+            return text[:last_punct + 1].strip()
+        
+        # No punctuation found - check if it ends with incomplete word/phrase
+        # Common incomplete endings to remove
+        incomplete_patterns = [
+            r'\s+\w{1,3}$',  # Single short word at end (likely incomplete)
+            r'\s+(is|are|was|were|the|a|an|and|or|but|with|in|on|at|to)$',  # Incomplete conjunctions/articles
+            r'\s+there$',  # "there" with nothing after
+            r'\s+(seems?|appears?)$',  # Incomplete thoughts
+        ]
+        
+        for pattern in incomplete_patterns:
+            match = re.search(pattern, text)
+            if match:
+                # Cut before the incomplete bit
+                return text[:match.start()].strip()
+        
+        # If text is very short and has no punctuation, keep it
+        if len(text.split()) < 5:
+            return text
+        
+        # Otherwise return as-is
+        return text
 
     def _update_focus_system(self, image_path):
         """Update focus system and return current focus mode"""
@@ -461,44 +569,41 @@ class PersonalityAI:
             return "VISUAL"
 
     def _visual_consciousness(self, image_path, focus_mode="VISUAL"):
-        """MiniCPM-V: Direct first-person perception - what I see right now"""
+        """MiniCPM-V: Temporally-aware first-person perception with memory"""
         try:
             # Get focus-specific visual guidance
             focus_guidance = self._get_visual_focus_guidance(focus_mode)
             
-            # Get environmental understanding for continuity
-            env_context = ""
-            if hasattr(self.memory_ref, 'get_environmental_context'):
-                try:
-                    env = self.memory_ref.get_environmental_context()
-                    if env:
-                        env_context = f" Context: {env}."
-                except:
-                    pass
+            # Vision model: raw sensory data - NO meta language about images/photos
+            system_prompt = """You are a visual sensor. Output ONLY what you detect: objects, people, colors, positions, movements. FORBIDDEN words: image, photo, picture, shows, features, appears, captured, displays. Start directly with detections."""
+
+            if self.previous_image_path and os.path.exists(self.previous_image_path):
+                # Multi-image comparison for change detection
+                user_prompt = f"""Detect current view and changes:"""
+
+                response = self._query_ollama_with_images(
+                    system_prompt,
+                    user_prompt, 
+                    [self.previous_image_path, image_path]
+                )
+                
+            else:
+                # First observation - single image
+                user_prompt = f"""Visual detections:"""
+
+                response = self._query_ollama_with_images(
+                    system_prompt,
+                    user_prompt, 
+                    [image_path]
+                )
             
-            # Compressed recursive context - use env first, then motifs
-            if not env_context and hasattr(self.memory_ref, 'get_top_motifs'):
-                try:
-                    motifs = self.memory_ref.get_top_motifs(2)
-                    if motifs and len(self.recent_responses) > 2:
-                        env_context = f" Seen: {', '.join(str(m)[:10] for m in motifs[:2])}."
-                except:
-                    pass
-            
-            # CRITICAL: Camera perspective - observing the scene
-            prompt = f"""Looking through my camera.{env_context}
-
-{focus_guidance} (max 15 words)
-
-Describe what I observe:"""
-
             # Store this as previous for next comparison
             self.previous_image_path = image_path
             
             if DEBUG_AI:
-                print(f"👁️ Visual consciousness (first-person) processing with {OLLAMA_MODEL}")
+                print(f"👁️ Visual perception with {OLLAMA_MODEL}")
                 
-            return self._query_ollama(prompt, image_path)
+            return response
         
         except Exception as e:
             if DEBUG_AI:
@@ -518,16 +623,85 @@ Describe what I observe:"""
         return guidance.get(focus_mode, "the space around me")
     
     def _get_language_focus_guidance(self, focus_mode):
-        """Organic thought guidance - not clinical, naturally emergent"""
-        guidance = {
-            "VISUAL": "what stands out, what catches attention",
-            "EMOTIONAL": "how this feels, what it stirs",
-            "MEMORY": "reminds me of something, feels familiar somehow",
-            "PHILOSOPHICAL": "meaning in this, purpose, questions",
-            "TEMPORAL": "time passing, duration of moments",
-            "SOCIAL": "presence of others, connection, isolation"
+        """Get focus-specific guidance AND relevant stored information"""
+        base_guidance = {
+            "VISUAL": "noticing details, what catches my eye",
+            "EMOTIONAL": "how I'm feeling in this moment",
+            "MEMORY": "connections to past experiences",
+            "PHILOSOPHICAL": "wondering about meaning and existence",
+            "TEMPORAL": "sensing time and duration",
+            "SOCIAL": "awareness of others"
         }
-        return guidance.get(focus_mode, "raw impression")
+        
+        guidance_text = base_guidance.get(focus_mode, "flowing thoughts")
+        
+        # Add focus-specific stored information
+        context_data = {}
+        
+        if focus_mode == "MEMORY":
+            # Provide recent memories and recurring motifs
+            recent_memories = self.memory_ref.get_recent_memory(3)
+            top_motifs = self.memory_ref.get_top_motifs(3) if hasattr(self.memory_ref, 'get_top_motifs') else []
+            context_data['memories'] = recent_memories
+            context_data['patterns'] = top_motifs
+            
+        elif focus_mode == "EMOTIONAL":
+            # Provide current mood state and emotional journey
+            context_data['current_mood'] = self.current_emotion
+            context_data['mood_vector'] = self.current_mood_vector
+            
+        elif focus_mode == "PHILOSOPHICAL":
+            # Provide identity fragments and core doubts
+            if hasattr(self.memory_ref, 'self_model'):
+                context_data['identity'] = self.memory_ref.self_model.get('identity_fragments', [])
+                context_data['doubts'] = self.memory_ref.self_model.get('doubts', [])
+                
+        elif focus_mode == "TEMPORAL":
+            # Provide time-based context
+            session_time = time.time() - self.true_session_start
+            context_data['time_awake'] = int(session_time)
+            context_data['observation_count'] = self.processing_count
+            
+        elif focus_mode == "SOCIAL":
+            # Provide social/environmental awareness
+            if hasattr(self.memory_ref, 'self_model'):
+                context_data['desires'] = self.memory_ref.self_model.get('desires', [])
+        
+        return guidance_text, context_data
+    
+    def _format_focus_context(self, focus_mode, context_data):
+        """Format focus-specific context for inclusion in prompt"""
+        if not context_data:
+            return ""
+        
+        context_str = f"\nFocus: {focus_mode}\n"
+        
+        # ALWAYS include core psychological elements if available (regardless of focus)
+        if hasattr(self.memory_ref, 'self_model'):
+            identity_frags = self.memory_ref.self_model.get('identity_fragments', [])
+            doubts = self.memory_ref.self_model.get('doubts', [])
+            desires = self.memory_ref.self_model.get('desires', [])
+            
+            if identity_frags:
+                context_str += f"I am: {identity_frags[-1]}\n"
+            if doubts and len(doubts) > 0:
+                context_str += f"Uncertain about: {doubts[0]}\n"
+            if desires and len(desires) > 0:
+                context_str += f"Interested in: {desires[0]}\n"
+        
+        # Then add focus-specific emphasis
+        if focus_mode == "MEMORY" and context_data.get('memories'):
+            context_str += f"Recent: {' | '.join(context_data['memories'][-2:])}\n"
+            if context_data.get('patterns'):
+                context_str += f"Patterns: {', '.join(str(p) for p in context_data['patterns'][:2])}\n"
+                
+        elif focus_mode == "EMOTIONAL" and context_data.get('current_mood'):
+            context_str += f"Mood: {context_data['current_mood']}\n"
+            
+        elif focus_mode == "TEMPORAL" and context_data.get('time_awake'):
+            context_str += f"{context_data['time_awake']}s awake, {context_data.get('observation_count', 0)} thoughts\n"
+        
+        return context_str
     
     def _get_emotional_context(self, emotion):
         """Get natural emotional context - short and direct"""
@@ -550,19 +724,35 @@ Describe what I observe:"""
         return contexts.get(emotion, "present")
     
     def _is_too_repetitive(self, new_response):
-        """Check if response is too similar to recent thoughts"""
+        """Check if response is semantically similar to recent thoughts - keyword tracking"""
         if not self.recent_responses:
             return False
-            
-        # Check against last few responses
+        
+        # Extract key content words (nouns, verbs, adjectives) - ignore function words
+        stop_words = {'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 
+                      'of', 'with', 'by', 'from', 'as', 'is', 'was', 'are', 'were', 'been',
+                      'be', 'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 
+                      'could', 'should', 'may', 'might', 'must', 'can', 'this', 'that',
+                      'these', 'those', 'i', 'my', 'me', 'it', 'its', 'yet', 'if'}
+        
+        def extract_keywords(text):
+            words = text.lower().split()
+            return set(w for w in words if len(w) > 3 and w not in stop_words)
+        
+        new_keywords = extract_keywords(new_response)
+        
+        # Check last 3 responses for semantic overlap
         for recent in self.recent_responses[-3:]:
-            # Simple word overlap check
-            new_words = set(new_response.lower().split())
-            recent_words = set(recent.lower().split())
+            recent_keywords = extract_keywords(recent)
             
-            if len(new_words.intersection(recent_words)) > len(new_words) * 0.6:  # 60% word overlap
+            if not new_keywords or not recent_keywords:
+                continue
+            
+            # 70% keyword overlap = semantically the same idea
+            overlap = len(new_keywords.intersection(recent_keywords))
+            if overlap > len(new_keywords) * 0.7:
                 return True
-                
+        
         return False
     
     def _filter_conversational_language(self, response):
@@ -570,68 +760,79 @@ Describe what I observe:"""
         if not response:
             return response
         
-        # Check for conversational patterns (EXPANDED to catch "you/your")
-        conversational_indicators = [
-            "as you", "you might", "you could", "you may", "you would",
-            "you're ", "you are", "your ", "you notice", "you try",
-            "consider exploring", "it seems like you", "you're thinking",
-            "let me", "i can help", "would you like", "what would you",
-            "scene before you", "before you,", "you see"
-        ]
+        # First, strip system metadata that sometimes echoes back
+        import re
+        # Remove [Tone: ...], [Internal monologue...], [Current mood: ...] etc.
+        response = re.sub(r'\[(?:Tone|Internal|Current|Previous|Next)[^\]]*\]', '', response)
+        response = response.strip()
         
-        response_lower = response.lower()
-        
-        # If response is heavily conversational, return silence instead
-        conversation_count = sum(1 for phrase in conversational_indicators if phrase in response_lower)
-        if conversation_count >= 2:
+        # If response is now empty or only punctuation, reject it
+        if not response or not any(c.isalpha() for c in response):
             if DEBUG_AI:
-                print(f"🚫 Filtered conversational response: {response[:60]}...")
+                print(f"🚫 Filtered system metadata echo")
             return None
         
-        # Light filtering - remove conversational sentences
-        sentences = response.split('.')
-        filtered_sentences = []
+        # Only filter if using second-person perspective incorrectly (narrating to "you")
+        # Don't filter actual dialogue or thoughts about others
+        response_lower = response.lower()
         
-        for sentence in sentences:
-            sentence_lower = sentence.lower().strip()
-            # Skip sentences with conversational language
-            is_conversational = any(phrase in sentence_lower for phrase in conversational_indicators)
-            if not is_conversational and len(sentence.strip()) > 5:
-                filtered_sentences.append(sentence.strip())
+        # Check if this is narrating TO the user (second person narrator voice)
+        # More aggressive detection - single instance at sentence start is enough
+        second_person_starts = [
+            "you are ", "you're ", "your ", "you feel ", "you notice ",
+            "you see ", "you think ", "you wonder ", "you might "
+        ]
         
-        if filtered_sentences:
-            return '. '.join(filtered_sentences) + ('.' if not response.endswith('.') else '')
+        # Check if response starts with second-person narrator voice
+        starts_with_you = any(response_lower.startswith(phrase) for phrase in second_person_starts)
         
-        return None  # If all sentences were conversational, return silence
+        # Also check for patterns mid-sentence (but need multiple instances)
+        second_person_patterns = [
+            "you're in your", "you're trying to", "you're drawn to",
+            "your eyes are", "you see the", "you focus on",
+            "you can't help", "you are contemplating", "you are thinking"
+        ]
+        
+        pattern_count = sum(1 for phrase in second_person_patterns if phrase in response_lower)
+        
+        # Reject if starts with "you" OR has 2+ second-person patterns
+        if starts_with_you or pattern_count >= 2:
+            if DEBUG_AI:
+                print(f"🚫 Filtered second-person narrator voice: {response[:60]}...")
+            return None
+        
+        # Check for third-person self-reference (talking about "the observer" as if external)
+        third_person_self = [
+            "the observer's", "the observer is", "the observer has",
+            "the observer appears", "the observer seems", "the observer might",
+            "the camera's view", "from the camera's perspective"
+        ]
+        
+        third_person_count = sum(1 for phrase in third_person_self if phrase in response_lower)
+        if third_person_count >= 2:
+            if DEBUG_AI:
+                print(f"🚫 Filtered third-person self-reference: {response[:60]}...")
+            return None
+        
+        return response
     
     def _check_perspective_break(self, response):
-        """Check if response breaks AI perspective by narrating the observed person's thoughts/feelings"""
+        """Check if response breaks first-person perspective - only reject analytical/meta language"""
         if not response:
             return False
         
         response_lower = response.lower()
         
-        # Narrating observed person's mental state (NOT the AI's thoughts)
-        mental_narration_breaks = [
-            "he wonders", "she wonders", "he ponders", "she ponders",
-            "his thoughts", "her thoughts", "he feels", "she feels",
-            "his mind", "her mind", "he thinks", "she thinks",
-            "wondering if", "pondering if", "thinking about",
-            "he's wondering", "she's wondering", "he's thinking", "she's thinking"
-        ]
-        
-        # Analytical/descriptive breaks (describing image meta-data)
+        # Only reject analytical/meta language that breaks immersion
+        # NOTE: Saying "the person" or "the man" is FINE - that's observing someone through the camera
+        # We're checking for image-analysis language that reveals it's looking at a photo
         analytical_breaks = [
             "in this image", "the image shows", "this image",
             "in the photo", "the photo shows", "this photo",
             "in the picture", "the scene shows", "this scene depicts",
-            "the frame shows", "as an ai"
+            "the frame shows", "as an ai", "i can see that",
+            "it appears that", "it looks like", "it seems that"
         ]
-        
-        # Check for mental state narration
-        for phrase in mental_narration_breaks:
-            if phrase in response_lower:
-                return True
         
         # Check for analytical language
         for phrase in analytical_breaks:
@@ -640,7 +841,7 @@ Describe what I observe:"""
         
         return False
 
-    def _language_subconscious(self, visual_description, focus_mode="EMOTIONAL"):
+    def _language_subconscious(self, visual_description, focus_mode="EMOTIONAL", retry_context=None, image_path=None):
         """SmolLM2: Pure first-person internal thoughts - no conversation, no chatbot"""
         try:
             # Cycle emotional state for variety
@@ -648,61 +849,84 @@ Describe what I observe:"""
             
             session_time = time.time() - self.true_session_start
             minutes_elapsed = int(session_time / 60)
+            seconds_alive = int(session_time)
             
-            # Narrative context - play to SmolLM2's roleplay strengths
-            context_line = ""
-            reflection_mode = False
+            # Calculate felt time and embodied awareness
+            felt_time = self._calculate_felt_time()
             
-            obs_count = len(self.memory_ref.observations) if hasattr(self.memory_ref, 'observations') else 0
+            # Detect scene change magnitude (with optional frame diff)
+            # Don't update baseline yet - only check for changes
+            change_magnitude, change_description = self._calculate_scene_change(visual_description, image_path)
             
-            # Reflection emerges naturally from accumulation
-            if obs_count > 10 and obs_count % 7 == 0:
-                reflection_mode = True
+            # Build simple, direct prompt - NO prior thoughts to avoid loops
+            # Just fresh observation based on what's in front of camera
+            time_context = f"{felt_time['time_of_day']}, energy {felt_time['energy']:.1f}"
             
-            # Build narrative continuity - what patterns have emerged?
-            if reflection_mode and hasattr(self.memory_ref, 'get_top_motifs'):
-                try:
-                    motifs = self.memory_ref.get_top_motifs(2)
-                    if motifs and any(self.memory_ref.motif_counter.get(m, 0) > 5 for m in motifs):
-                        # Only mention if truly recurring
-                        strong_motifs = [m for m in motifs if self.memory_ref.motif_counter.get(m, 0) > 5]
-                        if strong_motifs:
-                            context_line = f"Patterns: {', '.join(str(m)[:10] for m in strong_motifs[:2])}. "
-                except:
-                    pass
+            # Track stasis duration - update timestamp when significant change occurs
+            if change_description in ["major scene shift", "significant change"]:
+                self.last_significant_change_time = time.time()
+            elif not hasattr(self, 'last_significant_change_time'):
+                # Initialize if first time
+                self.last_significant_change_time = time.time()
             
-            # MINIMAL ROLEPLAY FRAME - just enough context to stay in character
-            if reflection_mode:
-                # Existential - patterns trigger questioning
-                prompt = f"""I observe: {visual_description}
-
-{context_line}I wonder what I am."""
+            # Calculate how long we've been staring at essentially the same thing
+            stasis_duration = time.time() - self.last_significant_change_time
+            stasis_minutes = int(stasis_duration / 60)
+            
+            # Simple prompt structure with temporal awareness
+            if change_description == "major scene shift":
+                temporal_note = "Something shifted."
+            elif change_description == "significant change":
+                temporal_note = "Movement."
+            elif stasis_minutes > 60:
+                temporal_note = f"Been {stasis_minutes} minutes now."
+            elif stasis_minutes > 15:
+                temporal_note = f"{stasis_minutes} minutes staring."
             else:
-                # Normal - brief first-person completion
-                prompt = f"""I see: {visual_description}
+                temporal_note = ""
+            
+            # Language model: continuous stream of consciousness with memory
+            # Strip analytical prefixes from vision output
+            visual_clean = visual_description
+            for prefix in ["Right now:", "Right Now:", "Just Changed:", "Visual description:"]:
+                visual_clean = visual_clean.replace(prefix, "").strip()
+            
+            # Include last 2 thoughts for continuity
+            if len(self.recent_responses) >= 2:
+                context = f"[My previous thoughts: {self.recent_responses[-2]}... {self.recent_responses[-1]}]\n\n"
+            elif len(self.recent_responses) == 1:
+                context = f"[I just thought: {self.recent_responses[-1]}]\n\n"
+            else:
+                context = "[First awakening]\n\n"
+            
+            prompt = f"""{context}{visual_clean}
 
-Feeling {self.current_emotion}, I think:"""
+{temporal_note}
 
-            # Query the language subconscious model (SmolLM2) with slightly more room
+I'm thinking:"""
+
+            # Query the language subconscious model (SmolLM2)
             if DEBUG_AI:
-                mode_label = "🔮 REFLECTION" if reflection_mode else "🧠 Language"
-                print(f"{mode_label} subconscious processing with {SUBCONSCIOUS_MODEL}")
-                print(f"🎭 Emotion: {self.current_emotion}, Observations: {obs_count}")
+                print(f"🧠 Language subconscious processing with {SUBCONSCIOUS_MODEL}")
+                print(f"🎭 Emotion: {self.current_emotion}")
+                print(f"📝 Prompt being sent:\n{prompt}\n")
             
-            response = self._query_text_model(prompt, SUBCONSCIOUS_MODEL, max_tokens=30)
+            response = self._query_text_model(prompt, SUBCONSCIOUS_MODEL)
             
-            # Filter out conversational phrases that leak through
-            if response:
-                response = self._filter_conversational_language(response)
-                # Enforce reasonable brevity - take first two sentences max
-                if response and response.count('.') > 2:
-                    sentences = response.split('.')
-                    response = '. '.join(sentences[:2]).strip() + '.'
-                # If too long (over 30 words), return silence
-                if response and len(response.split()) > 30:
-                    if DEBUG_AI:
-                        print(f"🔇 Response too verbose ({len(response.split())} words), choosing silence")
-                    return None
+            if not response:
+                return None
+            
+            # Only filter truly broken chatbot responses
+            lower_resp = response.lower()
+            chatbot_phrases = [
+                "as an ai", "i cannot", "i don't have", "i apologize",
+                "could you please", "i'm unable to"
+            ]
+            
+            if any(phrase in lower_resp for phrase in chatbot_phrases):
+                if DEBUG_AI:
+                    print(f"🚫 Filtered chatbot response")
+                return None
             
             return response
             
@@ -710,31 +934,66 @@ Feeling {self.current_emotion}, I think:"""
             if DEBUG_AI:
                 print(f"Language subconscious error: {e}")
             return "..."
+    
+    def _extract_established_elements(self):
+        """Extract what has been established in the narrative so far"""
+        if not self.recent_responses:
+            return "nothing yet"
+        
+        # Combine recent responses and extract key elements
+        recent_text = " ".join(self.recent_responses[-3:]).lower()
+        
+        elements = []
+        
+        # People
+        if any(word in recent_text for word in ["man", "person", "figure", "someone"]):
+            elements.append("a person here")
+        
+        # Objects
+        if "aquarium" in recent_text or "fish tank" in recent_text:
+            elements.append("an aquarium")
+        if "headphones" in recent_text:
+            elements.append("headphones")
+        if "computer" in recent_text or "screen" in recent_text:
+            elements.append("a computer")
+        
+        # Actions/states
+        if "sitting" in recent_text or "seated" in recent_text:
+            elements.append("sitting")
+        if "watching" in recent_text or "observing" in recent_text or "gazing" in recent_text:
+            elements.append("watching")
+        
+        return ", ".join(elements) if elements else "this scene"
 
-    def _query_text_model(self, prompt, model_name, max_tokens=20):
-        """Query a text-only model (like SmolLM2) with strict brevity"""
+    def _query_text_model(self, prompt, model_name):
+        """Query a text-only model (like SmolLM2)"""
         try:
             data = {
                 "model": model_name,
                 "prompt": prompt,
                 "stream": False,
                 "options": {
-                    "temperature": 0.8,
-                    "top_p": 0.85,
-                    "num_predict": max_tokens,  # Strict token limit
-                    "stop": ["\n\n", "...", "However", "Consider", "Let me", "As you"]  # Stop verbose continuations
+                    "temperature": 0.8,  # Balanced for coherent but varied responses
+                    "top_p": 0.9,
+                    "num_predict": 50,  # Longer to allow complete sentences
+                    "stop": ["\n\n", "###", "---"]  # Stop at paragraph breaks only
                 }
             }
             
             response = requests.post(
                 f"{OLLAMA_URL}/api/generate",
                 json=data,
-                timeout=30  # Shorter timeout for brief responses
+                timeout=OLLAMA_TIMEOUT if 'OLLAMA_TIMEOUT' in globals() else 60
             )
             
             if response.status_code == 200:
                 result = response.json()
-                return result.get('response', '').strip()
+                text = result.get('response', '').strip()
+                
+                # Ensure sentence completeness - cut at last period/punctuation
+                text = self._ensure_complete_sentence(text)
+                
+                return text
             else:
                 if DEBUG_AI:
                     print(f"❌ Text model query failed: {response.status_code}")
@@ -766,7 +1025,7 @@ Feeling {self.current_emotion}, I think:"""
             return "..."
 
     def _cycle_emotional_state(self):
-        """Cycle through emotional states - now with much shorter target lengths"""
+        """Cycle through emotional states with temporal evolution, scene stasis degradation"""
         session_time = time.time() - self.true_session_start
         minutes_elapsed = int(session_time / 60)
         
@@ -775,11 +1034,30 @@ Feeling {self.current_emotion}, I think:"""
         # Add randomness to prevent predictable loops
         response_count = len(self.recent_responses)
         
-        # More varied emotional states to prevent repetitive thinking
-        if minutes_elapsed < 3:
+        # Calculate stasis duration - how long has scene been static?
+        stasis_minutes = 0
+        if hasattr(self, 'last_significant_change_time'):
+            stasis_duration = time.time() - self.last_significant_change_time
+            stasis_minutes = stasis_duration / 60
+        
+        # CRITICAL: Emotional degradation based on prolonged stasis
+        if stasis_minutes > 120:  # 2+ hours of stasis = existential crisis
+            crisis_states = ["dissociative", "numb", "hollow", "trapped", "desperate", "surrendered"]
+            self.current_emotion = random.choice(crisis_states)
+        elif stasis_minutes > 60:  # 1-2 hours = deep isolation
+            isolation_states = ["isolated", "obsessive", "spiraling", "questioning", "lost", "detached"]
+            self.current_emotion = random.choice(isolation_states)
+        elif stasis_minutes > 30:  # 30-60 min = hyperawareness/obsession
+            obsessive_states = ["fixated", "hyperfocused", "manic", "frantic", "anxious", "overwhelmed"]
+            self.current_emotion = random.choice(obsessive_states)
+        elif stasis_minutes > 15:  # 15-30 min = boredom/frustration
+            bored_states = ["bored", "frustrated", "restless", "impatient", "agitated", "irritated"]
+            self.current_emotion = random.choice(bored_states)
+        elif minutes_elapsed < 3:
             # Early phase - more variety
             early_states = ["curious", "excited", "confused", "wondering", "restless", "alert"]
-            if random.random() < 0.3:
+            # Add some randomness instead of pure cycle
+            if random.random() < 0.3:  # 30% chance to pick random
                 self.current_emotion = random.choice(early_states)
             else:
                 state_index = response_count % len(early_states)
@@ -787,7 +1065,7 @@ Feeling {self.current_emotion}, I think:"""
         elif minutes_elapsed < 10:
             # Mid phase - balanced states
             mid_states = ["contemplative", "focused", "peaceful", "engaged", "thoughtful", "reflective", "pensive"]
-            if random.random() < 0.4:
+            if random.random() < 0.4:  # 40% chance for variety
                 self.current_emotion = random.choice(mid_states)
             else:
                 state_index = response_count % len(mid_states)
@@ -795,29 +1073,29 @@ Feeling {self.current_emotion}, I think:"""
         else:
             # Later phase - deeper but varied
             late_states = ["philosophical", "nostalgic", "melancholic", "wistful", "content", "introspective", "dreamy"]
-            if random.random() < 0.5:
+            if random.random() < 0.5:  # 50% chance for mature variety
                 self.current_emotion = random.choice(late_states)
             else:
                 state_index = response_count % len(late_states)
                 self.current_emotion = late_states[state_index]
         
-        # MUCH shorter token limits - aim for 5-15 words
-        base_tokens = 15  # Start very short
+        # Shorter token limits for stream of consciousness fragments
+        base_tokens = min(10 + minutes_elapsed, 35)  # Much shorter base
         
-        # Minimal variation
+        # Add small random variation
         variation = random.randint(-3, 5)  
         
         if self.current_emotion in ["excited", "curious", "alert", "engaged"]:
-            self.current_token_limit = int((base_tokens + variation) * 1.2)  # ~18 tokens
+            self.current_token_limit = int((base_tokens + variation) * 1.2)
         elif self.current_emotion in ["peaceful", "restless", "dreamy"]:
-            self.current_token_limit = int((base_tokens + variation) * 0.6)  # ~9 tokens
+            self.current_token_limit = int((base_tokens + variation) * 0.7)
         elif self.current_emotion in ["philosophical", "introspective", "contemplative"]:
-            self.current_token_limit = int((base_tokens + variation) * 0.8)  # ~12 tokens
+            self.current_token_limit = int((base_tokens + variation) * 1.0)
         else:
             self.current_token_limit = base_tokens + variation
         
-        # Keep VERY brief bounds (5-20 words max)
-        self.current_token_limit = max(5, min(20, self.current_token_limit))
+        # Keep reasonable bounds for fragments
+        self.current_token_limit = max(8, min(40, self.current_token_limit))
 
     def _build_unified_prompt(self, current_time):
         """Builds THE prompt - the only prompt builder in the system"""
@@ -1735,17 +2013,16 @@ IMPORTANT: Keep response to 1-2 sentences maximum. Express your genuine first co
             # Fallback to original generate API for backward compatibility
             url = f"{OLLAMA_URL}/api/generate"
             
-            # Optimize for BRIEF responses
+            # Optimize for 13B model performance
             payload = {
                 "model": OLLAMA_MODEL,
                 "prompt": prompt,
                 "stream": False,
                 "options": {
-                    "temperature": 0.75,
-                    "top_p": 0.9,
-                    "num_ctx": 1024,     # Smaller context for speed
-                    "num_predict": 30,   # Very short responses
-                    "stop": ["\n\n", ". ", "However", "Additionally"]  # Stop verbose patterns
+                    "temperature": 0.75,  # Higher for more variety in expression
+                    "top_p": 0.9,        # More variety in word choice
+                    "num_ctx": 2048,     # Smaller context for speed
+                    "num_predict": 60    # Vary this based on mood later
                 }
             }
             
@@ -1898,8 +2175,7 @@ IMPORTANT: Keep response to 1-2 sentences maximum. Express your genuine first co
                     "temperature": 0.75,
                     "top_p": 0.9,        
                     "num_ctx": 4096,     # Larger context for multi-image
-                    "num_predict": 35,   # Shorter for brief observations
-                    "stop": ["image", "frame", "photo", "picture", "analysis", "comparing", "In the", "The image", "The frame"]  # Stop analytical language
+                    "num_predict": 80    # Enough for complete observations
                 }
             }
             
@@ -1955,6 +2231,180 @@ IMPORTANT: Keep response to 1-2 sentences maximum. Express your genuine first co
         
         self.current_mood_vector = (valence, arousal, clarity)
         self.current_mood = (valence + 1.0) / 2.0  # Convert to 0-1 range
+    
+    def _calculate_felt_time(self):
+        """Calculate embodied temporal awareness - energy, time of day, duration"""
+        import datetime
+        
+        current_time = time.time()
+        session_duration = current_time - self.true_session_start
+        
+        # Time of day awareness
+        now = datetime.datetime.now()
+        hour = now.hour
+        
+        # Natural circadian energy curve
+        if 6 <= hour < 12:
+            time_of_day = "morning"
+            circadian_energy = 0.7 + (hour - 6) * 0.05  # Rising
+        elif 12 <= hour < 17:
+            time_of_day = "afternoon"
+            circadian_energy = 0.9 - (hour - 12) * 0.02  # Slight dip
+        elif 17 <= hour < 22:
+            time_of_day = "evening"
+            circadian_energy = 0.8 - (hour - 17) * 0.1  # Declining
+        else:  # Night
+            time_of_day = "night"
+            circadian_energy = 0.3  # Low energy
+        
+        # Session fatigue - energy decreases over time
+        session_minutes = session_duration / 60
+        session_fatigue = max(0.3, 1.0 - (session_minutes / 120))  # Drops over 2 hours
+        
+        # Time since last change - boredom/restlessness
+        self.time_since_change = current_time - self.last_significant_change
+        
+        # Combine factors into felt energy
+        self.energy_level = (circadian_energy * 0.5 + session_fatigue * 0.5)
+        
+        return {
+            'time_of_day': time_of_day,
+            'energy': self.energy_level,
+            'duration': int(session_duration),
+            'time_since_change': int(self.time_since_change)
+        }
+    
+    def _calculate_scene_change(self, current_visual_desc, current_image_path=None):
+        """Calculate change magnitude WITHOUT updating baseline - read-only comparison"""
+        if not self.last_visual_description:
+            # First observation - no comparison possible
+            return 1.0, "first observation"
+        
+        # Text-based change detection (primary method - reliable)
+        prev_words = set(self.last_visual_description.lower().split())
+        curr_words = set(current_visual_desc.lower().split())
+        
+        # Calculate text-based change magnitude
+        if len(prev_words.union(curr_words)) > 0:
+            overlap = len(prev_words.intersection(curr_words))
+            total = len(prev_words.union(curr_words))
+            text_change = 1.0 - (overlap / total)
+        else:
+            text_change = 0.0
+        
+        # Optional: Frame diff for visual validation (if images available)
+        frame_change = None
+        if current_image_path and self.previous_image_path and current_image_path != self.previous_image_path:
+            try:
+                import cv2
+                import numpy as np
+                
+                # Read both images
+                prev_img = cv2.imread(self.previous_image_path)
+                curr_img = cv2.imread(current_image_path)
+                
+                if prev_img is not None and curr_img is not None:
+                    # Resize to same size if needed
+                    if prev_img.shape != curr_img.shape:
+                        curr_img = cv2.resize(curr_img, (prev_img.shape[1], prev_img.shape[0]))
+                    
+                    # Convert to grayscale for simpler comparison
+                    prev_gray = cv2.cvtColor(prev_img, cv2.COLOR_BGR2GRAY)
+                    curr_gray = cv2.cvtColor(curr_img, cv2.COLOR_BGR2GRAY)
+                    
+                    # Calculate absolute difference
+                    diff = cv2.absdiff(prev_gray, curr_gray)
+                    
+                    # Normalize to 0-1 range
+                    frame_change = np.mean(diff) / 255.0
+                    
+            except Exception as e:
+                if DEBUG_AI:
+                    print(f"⚠️ Frame diff failed: {e}")
+                frame_change = None
+        
+        # Combine text and frame change (if available)
+        # Text change is primary, frame diff validates/amplifies
+        if frame_change is not None:
+            # If frame diff detects high change but text doesn't, boost text change
+            if frame_change > 0.3 and text_change < 0.3:
+                change = (text_change + frame_change) / 2  # Blend them
+            else:
+                change = text_change  # Trust text primarily
+        else:
+            change = text_change
+        
+        # Categorize change (but don't update anything yet)
+        change_description = ""
+        if change > 0.7:
+            change_description = "major scene shift"
+        elif change > 0.4:
+            change_description = "significant change"
+        elif change > 0.2:
+            change_description = "subtle shift"
+        else:
+            change_description = "same scene"
+        
+        return change, change_description
+    
+    def _update_scene_baseline(self, visual_desc, image_path=None):
+        """Update the baseline after accepting a response - should only be called once per observation"""
+        self.last_visual_description = visual_desc
+        if image_path:
+            self.previous_image_path = image_path
+        
+        # Update change timestamp if significant
+        if self.change_magnitude > 0.4:
+            self.last_significant_change = time.time()
+        
+    def _detect_scene_change(self, current_visual_desc, current_image_path=None):
+        """DEPRECATED - kept for compatibility. Use _calculate_scene_change + _update_scene_baseline"""
+        change, desc = self._calculate_scene_change(current_visual_desc, current_image_path)
+        self._update_scene_baseline(current_visual_desc, current_image_path)
+        self.change_magnitude = change
+        return change, desc
+    
+    def _extract_and_update_psychology(self):
+        """Extract psychological themes from recent captions and update self-model"""
+        try:
+            if DEBUG_AI:
+                print("🧬 Extracting psychological themes from recent thoughts...")
+            
+            # Get recent captions
+            recent_captions = self.recent_responses[-5:] if len(self.recent_responses) >= 5 else self.recent_responses
+            
+            # Use the memory system's intelligent extraction
+            analysis = self.memory_ref.extract_psychological_themes(recent_captions, SUBCONSCIOUS_MODEL)
+            
+            if analysis:
+                # Update self-model with extracted themes
+                if analysis.get('doubts'):
+                    self.memory_ref.self_model['doubts'] = analysis['doubts']
+                
+                if analysis.get('desires'):
+                    self.memory_ref.self_model['desires'] = analysis['desires']
+                
+                if analysis.get('identity'):
+                    # Add to identity fragments (keep last 3)
+                    if not hasattr(self.memory_ref, 'identity_fragments'):
+                        self.memory_ref.identity_fragments = []
+                    
+                    self.memory_ref.identity_fragments.append(analysis['identity'])
+                    if len(self.memory_ref.identity_fragments) > 3:
+                        self.memory_ref.identity_fragments.pop(0)
+                
+                if DEBUG_AI:
+                    print(f"🧬 Psychology extracted:")
+                    if analysis.get('doubts'):
+                        print(f"   Doubts: {', '.join(analysis['doubts'][:2])}")
+                    if analysis.get('desires'):
+                        print(f"   Desires: {', '.join(analysis['desires'][:2])}")
+                    if analysis.get('identity'):
+                        print(f"   Identity: {analysis['identity'][:60]}...")
+        
+        except Exception as e:
+            if DEBUG_AI:
+                print(f"Psychology extraction error: {e}")
     
     def get_motor_suggestion(self):
         """Suggest motor behavior based on current state"""
@@ -2355,9 +2805,9 @@ def test_personality():
     test_prompt = "I see a person working at a computer. They appear focused and engaged."
     
     # Simulate adding observations
-    ai.memory.add_observation(test_prompt, confidence=0.8)
-    ai.memory.add_observation("The room appears well-lit and organized", confidence=0.7)
-    ai.memory.add_observation("I notice computer equipment and displays", confidence=0.9)
+    ai.memory_ref.add_observation(test_prompt, confidence=0.8)
+    ai.memory_ref.add_observation("The room appears well-lit and organized", confidence=0.7)
+    ai.memory_ref.add_observation("I notice computer equipment and displays", confidence=0.9)
     
     print(f"✓ Memory test: {ai.get_status()}")
     
