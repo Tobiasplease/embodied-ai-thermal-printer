@@ -12,7 +12,7 @@ OLLAMA_URL = "http://localhost:11434"
 # Dual Consciousness Model Setup
 OLLAMA_MODEL = "minicpm-v:8b"  # Visual perception model (what I see)
 SUBCONSCIOUS_MODEL = "smollm2:1.7b"  # Language/thought model (what I think about what I see)
-AI_PROCESS_INTERVAL = 7.0  # seconds between AI processing
+AI_PROCESS_INTERVAL = 15.0  # seconds between AI processing
 USE_SOPHISTICATED_PROMPTS = False  # Testing hybrid focus-aware legacy system
 OLLAMA_TIMEOUT = 120  # seconds - increase for complex prompts
 

@@ -538,14 +538,20 @@ class PersonalityAI:
             return "VISUAL"  # Default focus if system not enabled
         
         try:
-            # Calculate scene change hash for focus system
-            import hashlib
-            with open(image_path, 'rb') as f:
-                image_hash = hashlib.md5(f.read()).hexdigest()[:8]
+            # Use semantic scene change detection - prevents every frame from registering as "changed"
+            # Only report true change when semantically significant
+            if hasattr(self, 'last_visual_description') and self.last_visual_description:
+                # Calculate semantic change based on visual description similarity
+                temp_check = "checking for change"  # Will be replaced by actual visual later
+                change_magnitude, change_description = self._calculate_scene_change(temp_check, image_path)
+                scene_changed = change_description in ["major scene shift", "significant change"]
+            else:
+                scene_changed = True  # First observation
             
-            # Detect if scene changed significantly
-            scene_changed = (self.last_observation_hash != image_hash)
-            self.last_observation_hash = image_hash
+            if DEBUG_AI:
+                print(f"🔍 Focus Mode: {self.focus_engine.current_focus}")
+                print(f"   Static duration: {self.focus_engine.static_duration:.1f}s")
+                print(f"   Total observations: {self.focus_engine.total_observations}")
             
             # Update focus engine with scene information
             state_analysis = self.focus_engine.analyze_current_state(
@@ -574,12 +580,12 @@ class PersonalityAI:
             # Get focus-specific visual guidance
             focus_guidance = self._get_visual_focus_guidance(focus_mode)
             
-            # Vision model: raw sensory data - NO meta language about images/photos
-            system_prompt = """You are a visual sensor. Output ONLY what you detect: objects, people, colors, positions, movements. FORBIDDEN words: image, photo, picture, shows, features, appears, captured, displays. Start directly with detections."""
+            # Vision model: RAW SENSORY OUTPUT ONLY - no conversational mode
+            system_prompt = """OUTPUT FORMAT: List only. No sentences. No "the image", "in this", "the person". Just: object, color, position, state. Example: "dark hoodie. white walls. person seated. hand raised." NEVER say "image", "photo", "picture", "shows", "appears", "seems"."""
 
             if self.previous_image_path and os.path.exists(self.previous_image_path):
-                # Multi-image comparison for change detection
-                user_prompt = f"""Detect current view and changes:"""
+                # Raw detection list with changes noted
+                user_prompt = f"""Output: what's present. what changed."""
 
                 response = self._query_ollama_with_images(
                     system_prompt,
@@ -588,8 +594,8 @@ class PersonalityAI:
                 )
                 
             else:
-                # First observation - single image
-                user_prompt = f"""Visual detections:"""
+                # First observation - establish scene
+                user_prompt = f"""Describe what's present:"""
 
                 response = self._query_ollama_with_images(
                     system_prompt,
@@ -841,6 +847,33 @@ class PersonalityAI:
         
         return False
 
+    def _build_focus_context(self, focus_mode):
+        """Build focus-specific context to guide consciousness depth"""
+        if focus_mode == "VISUAL":
+            return "immediate sensory awareness"
+        
+        elif focus_mode == "EMOTIONAL":
+            return f"feeling {self.current_emotion}, processing inner state"
+        
+        elif focus_mode == "MEMORY":
+            # Use actual memory/patterns if available
+            recent_motifs = list(self.memory.motif_counter.most_common(2)) if hasattr(self, 'memory') else []
+            if recent_motifs:
+                motif_names = [m[0] for m in recent_motifs]
+                return f"recognizing patterns: {', '.join(motif_names[:2])}"
+            return "exploring familiar patterns, seeking connections"
+        
+        elif focus_mode == "PHILOSOPHICAL":
+            # Inject identity/existential context
+            return "questioning existence, identity, meaning of perception"
+        
+        elif focus_mode == "TEMPORAL":
+            # Time awareness
+            session_minutes = int((time.time() - self.true_session_start) / 60)
+            return f"aware of time passing, {session_minutes} minutes experienced"
+        
+        return "present awareness"
+
     def _language_subconscious(self, visual_description, focus_mode="EMOTIONAL", retry_context=None, image_path=None):
         """SmolLM2: Pure first-person internal thoughts - no conversation, no chatbot"""
         try:
@@ -873,37 +906,51 @@ class PersonalityAI:
             stasis_duration = time.time() - self.last_significant_change_time
             stasis_minutes = int(stasis_duration / 60)
             
-            # Simple prompt structure with temporal awareness
+            # Temporal awareness as natural continuation (not separate note)
             if change_description == "major scene shift":
-                temporal_note = "Something shifted."
+                temporal_context = " [scene just changed]"
             elif change_description == "significant change":
-                temporal_note = "Movement."
+                temporal_context = " [movement detected]"
             elif stasis_minutes > 60:
-                temporal_note = f"Been {stasis_minutes} minutes now."
+                temporal_context = f" [been here {stasis_minutes}min]"
             elif stasis_minutes > 15:
-                temporal_note = f"{stasis_minutes} minutes staring."
+                temporal_context = f" [{stasis_minutes}min]"
             else:
-                temporal_note = ""
+                temporal_context = ""
             
-            # Language model: continuous stream of consciousness with memory
-            # Strip analytical prefixes from vision output
+            # Language model: direct embodied experience
+            # Strip meta language from vision output
             visual_clean = visual_description
-            for prefix in ["Right now:", "Right Now:", "Just Changed:", "Visual description:"]:
+            for prefix in ["In the given image,", "In this image,", "The image shows,", "Right now:", "Right Now:", "Just Changed:", "Visual description:", "Something shifted.", "When comparing", "The individual in the photo"]:
                 visual_clean = visual_clean.replace(prefix, "").strip()
+            # Remove incomplete trailing phrases
+            if visual_clean.endswith("certain"):
+                visual_clean = visual_clean[:-7].strip()
             
-            # Include last 2 thoughts for continuity
-            if len(self.recent_responses) >= 2:
-                context = f"[My previous thoughts: {self.recent_responses[-2]}... {self.recent_responses[-1]}]\n\n"
-            elif len(self.recent_responses) == 1:
-                context = f"[I just thought: {self.recent_responses[-1]}]\n\n"
+            # Build focus-specific context for richer internal experience
+            focus_context = self._build_focus_context(focus_mode)
+            time_info = f"{felt_time['time_of_day']}, energy {felt_time['energy']:.1f}"
+            
+            if len(self.recent_responses) >= 1:
+                # Continuing consciousness with focus-appropriate depth
+                last_thought = self.recent_responses[-1]
+                prompt = f"""Continue this unbroken stream of consciousness. Build on what you just thought - don't repeat or restate. ONE brief sentence only (max 15 words).
+
+Focus: {focus_context}
+Time: {time_info} | State: {self.current_emotion}{temporal_context}
+Previous thought: "{last_thought}"
+Current perception: {visual_clean}
+
+My next thought (continuing naturally):"""
             else:
-                context = "[First awakening]\n\n"
-            
-            prompt = f"""{context}{visual_clean}
+                # First awakening with contextual grounding
+                prompt = f"""You are experiencing this scene through a camera. ONE brief sentence only (max 15 words). Write ONLY your internal thought about what you see.
 
-{temporal_note}
+Focus: {focus_context}
+Time: {time_info} | State: {self.current_emotion}{temporal_context}
+What you're seeing: {visual_clean}
 
-I'm thinking:"""
+Your internal thought:"""
 
             # Query the language subconscious model (SmolLM2)
             if DEBUG_AI:

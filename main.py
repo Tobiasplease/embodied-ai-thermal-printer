@@ -137,6 +137,7 @@ class EmbodiedAI:
         self.chunk_display_duration = 0  # Dynamic duration per chunk
         self.last_chunk_change_time = 0
         self.subtitle_lock = threading.Lock()
+        self.caption_version = 0  # Track caption changes to prevent old chunks from speaking
         
         # Silence period tracking
         self.in_silence_period = False
@@ -397,11 +398,18 @@ class EmbodiedAI:
                         if DEBUG_CAMERA:
                             print()  # New line after silence timer
                     
-                    # Calculate dynamic duration for first chunk
+                    # Calculate dynamic duration for first chunk (based on TTS duration)
                     if self.subtitle_chunks:
                         first_chunk = self.subtitle_chunks[0]
                         word_count = len(first_chunk.split())
-                        self.chunk_display_duration = self._calculate_chunk_duration(word_count)
+                        total_words = len(clean_caption.split())
+                        self.chunk_display_duration = self._calculate_tts_duration(word_count)
+                        
+                        # Speak first chunk immediately if voice enabled (non-blocking)
+                        if self.voice_system and VOICE_ALL_THOUGHTS:
+                            if DEBUG_AI:
+                                print(f"🎙️ Speaking chunk 0/{len(self.subtitle_chunks)-1}: {first_chunk[:50]}...")
+                            self._speak_async(first_chunk, total_caption_words=total_words)
                 
                 # Show output with timestamp (clean, simple)
                 timestamp_str = time.strftime("%H:%M:%S")
@@ -415,25 +423,6 @@ class EmbodiedAI:
                 else:
                     if DEBUG_AI:
                         print(f"❌ No thermal printer available")
-
-                # Send to voice system (optional)
-                if self.voice_system:
-                    current_time = time.time()
-                    should_speak = False
-                    
-                    if VOICE_ALL_THOUGHTS:
-                        # Speak every thought
-                        should_speak = True
-                    else:
-                        # Speak every VOICE_INTERVAL seconds
-                        if current_time - self.last_voice_time >= VOICE_INTERVAL:
-                            should_speak = True
-                            self.last_voice_time = current_time
-                    
-                    if should_speak:
-                        if DEBUG_AI:
-                            print(f"🎙️ Queueing for voice: {clean_caption[:50]}...")
-                        self.voice_system.speak(clean_caption)
         
         except Exception as e:
             if DEBUG_AI:
@@ -444,6 +433,37 @@ class EmbodiedAI:
             self.ai_processing_lock.release()
             if DEBUG_AI:
                 print(f"🔓 AI processing lock released")
+    
+    def _speak_async(self, text, total_caption_words=None, caption_version=None):
+        """Speak text in a separate thread to avoid blocking camera loop"""
+        if not self.voice_system or not text:
+            return
+        
+        def speak_worker():
+            try:
+                # BEFORE speaking, check if caption is still current (abort if new caption arrived)
+                if caption_version is not None and caption_version != self.caption_version:
+                    # Old caption - silently abort (new caption is more important)
+                    return
+                
+                # If this is part of a verbose caption, speed up
+                if total_caption_words and total_caption_words > 30:
+                    # Save original speed
+                    original_speed = self.voice_system.speed
+                    # Speed up by 20% for long captions
+                    self.voice_system.speed = int(original_speed * 1.2)
+                    self.voice_system.speak(text)
+                    # Restore original speed
+                    self.voice_system.speed = original_speed
+                else:
+                    self.voice_system.speak(text)
+            except Exception as e:
+                if DEBUG_AI:
+                    print(f"⚠️ TTS error: {e}")
+        
+        # Start speaking in background thread
+        thread = threading.Thread(target=speak_worker, daemon=True)
+        thread.start()
     
     def _create_smart_chunks(self, text):
         """Break text into sentence-based chunks for live captioning flow"""
@@ -486,14 +506,20 @@ class EmbodiedAI:
         
         return chunks
     
-    def _calculate_chunk_duration(self, word_count):
-        """Calculate how long to show a chunk based on comfortable reading speed"""
-        speaking_speed = 3.5  # words per second (comfortable reading pace)
-        min_duration = 1.5
-        max_duration = 3.5
+    def _calculate_tts_duration(self, word_count):
+        """Calculate how long TTS takes to speak a chunk based on eSpeak speed (130 wpm)"""
+        words_per_minute = ESPEAK_SPEED  # 130 from config
+        words_per_second = words_per_minute / 60.0
+        base_duration = word_count / words_per_second
         
-        base_time = word_count / speaking_speed
-        return max(min_duration, min(max_duration, base_time))
+        # Add slight breathing room between chunks
+        buffered_duration = base_duration + 0.5
+        
+        # Set reasonable bounds (lower min for short chunks)
+        min_duration = 1.0
+        max_duration = 8.0  # Longer max to accommodate full TTS playback
+        
+        return max(min_duration, min(max_duration, buffered_duration))
     
     def _draw_live_caption_overlay(self, frame):
         """Draw live captioning-style overlay with organic chunk progression and 4-second max display"""
@@ -521,7 +547,7 @@ class EmbodiedAI:
                     print(f"\r🔇 Silence: {silence_duration:.1f}s", end="", flush=True)
                 return frame  # Show blank space - silence is important
             
-            # Check if it's time to advance to next chunk (but only if we haven't hit 4-second limit)
+            # Check if it's time to advance to next chunk
             if (chunk_display_time >= self.chunk_display_duration and 
                 self.current_chunk_index < len(self.subtitle_chunks) - 1):
                 
@@ -535,11 +561,18 @@ class EmbodiedAI:
                     if DEBUG_CAMERA:
                         print()  # New line after silence timer
                 
-                # Calculate duration for new chunk
+                # Calculate duration for new chunk (based on TTS)
                 if self.current_chunk_index < len(self.subtitle_chunks):
                     chunk = self.subtitle_chunks[self.current_chunk_index]
                     word_count = len(chunk.split())
-                    self.chunk_display_duration = self._calculate_chunk_duration(word_count)
+                    current_version = self.caption_version  # Capture current version
+                    self.chunk_display_duration = self._calculate_tts_duration(word_count)
+                    
+                    # Speak this chunk if voice enabled (non-blocking)
+                    if self.voice_system and VOICE_ALL_THOUGHTS:
+                        if DEBUG_AI:
+                            print(f"🎙️ Speaking chunk {self.current_chunk_index}/{len(self.subtitle_chunks)-1}: {chunk[:50]}...")
+                        self._speak_async(chunk, caption_version=current_version)
                     
                     if DEBUG_CAMERA:
                         print(f"🎬 Next chunk: {word_count} words, {self.chunk_display_duration:.1f}s -> {chunk}")
