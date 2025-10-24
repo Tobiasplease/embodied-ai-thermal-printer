@@ -114,10 +114,17 @@ class FocusEngine:
         """
         current_time = time.time()
         
+        # === FORCED ROTATION CHECK ===
+        # Don't get stuck in VISUAL mode - rotate after too many observations
+        if self.current_focus == "VISUAL":
+            visual_observations = sum(1 for f in list(self.focus_history)[-6:] if f == "VISUAL")
+            if visual_observations >= 4:  # 4+ VISUAL observations in last 6 = force change
+                return self._force_focus_rotation(state_analysis, "breaking_visual_loop")
+        
         # === IMMEDIATE ATTENTION TRIGGERS ===
         
-        # High visual novelty always captures attention
-        if state_analysis['visual']['novelty_score'] > 0.8:
+        # High visual novelty captures attention (lowered threshold)
+        if state_analysis['visual']['novelty_score'] > 0.6:  # Was 0.8
             return self._focus_visual(state_analysis, "high_novelty")
             
         # Significant emotional shifts need processing
@@ -130,7 +137,7 @@ class FocusEngine:
         
         # Short static period - continue current focus or gentle visual attention
         if static_duration < 30:
-            if self.current_focus == "VISUAL" and state_analysis['visual']['novelty_score'] > 0.3:
+            if self.current_focus == "VISUAL" and state_analysis['visual']['novelty_score'] > 0.15:  # Was 0.3
                 return self._focus_visual(state_analysis, "continued_observation")
             else:
                 return self._maintain_current_focus(state_analysis)
@@ -412,6 +419,28 @@ class FocusEngine:
             'focus_history': list(self.focus_history)[-3:],
             'session_age': time.time() - self.session_start
         }
+    
+    def _force_focus_rotation(self, state: Dict, reason: str) -> Tuple[str, Dict]:
+        """Force a focus rotation to break out of VISUAL loops"""
+        # Cycle through non-visual focus modes
+        focus_cycle = ["EMOTIONAL", "MEMORY", "PHILOSOPHICAL", "TEMPORAL"]
+        
+        # Pick next focus based on what we haven't visited recently
+        recent_focuses = list(self.focus_history)[-4:]
+        for focus in focus_cycle:
+            if focus not in recent_focuses:
+                # Found a fresh focus mode
+                if focus == "EMOTIONAL":
+                    return self._focus_emotional(state, reason)
+                elif focus == "MEMORY":
+                    return self._focus_memory(state, reason)
+                elif focus == "PHILOSOPHICAL":
+                    return self._focus_philosophical(state, reason)
+                elif focus == "TEMPORAL":
+                    return self._focus_temporal(state, reason)
+        
+        # All recently visited, just cycle to next
+        return self._focus_emotional(state, reason)
     
     def _force_focus_change(self, reason: str = "forced_change"):
         """Force a focus change when repetition is detected"""

@@ -1,4 +1,5 @@
-# Configuration for Embodied AI v2
+# Configuration for Embodied AI v2 - OPTIMIZED FOR LIGHTER SYSTEMS
+# This uses smaller versions of the same model families
 # Simple, single-source configuration
 
 # Camera Settings
@@ -9,31 +10,21 @@ CAMERA_FPS = 30
 
 # AI Settings
 OLLAMA_URL = "http://localhost:11434"
-# Dual Consciousness Model Setup - PERFORMANCE TESTING OPTIONS
 
-# === CURRENT SETUP (uncomment ONE set) ===
+# Dual Consciousness Model Setup - SMALLER VERSIONS
+# Option 1: Smaller MiniCPM-V (if available - we pulled 'latest' which might be smaller)
+OLLAMA_MODEL = "minicpm-v:latest"  # Visual perception model (lighter than 8b)
+SUBCONSCIOUS_MODEL = "smollm2:1.7b"  # Language/thought model (MUCH lighter - 1.7B vs 8B)
 
-# Option 1: ORIGINAL (best quality, slowest) - 10.4GB total ⭐ ACTIVE
-OLLAMA_MODEL = "minicpm-v:8b"  # 5.5GB vision
-SUBCONSCIOUS_MODEL = "Tohur/natsumura-storytelling-rp-llama-3.1:8b"  # 4.9GB language
+# Option 2: Ultra-light with Moondream (uncomment to try)
+# OLLAMA_MODEL = "moondream:latest"  # Ultra-lightweight vision (1.7GB vs 5.5GB)
+# SUBCONSCIOUS_MODEL = "smollm2:1.7b"
 
-# Option 2: LIGHTER VISION (good balance) - 10.4GB total  
-# OLLAMA_MODEL = "minicpm-v:latest"  # 5.5GB vision (same as 8b currently)
-# SUBCONSCIOUS_MODEL = "Tohur/natsumura-storytelling-rp-llama-3.1:8b"  # 4.9GB language
+# Option 3: Just use smaller language model with 8b vision
+# OLLAMA_MODEL = "minicpm-v:8b"  # Keep original vision
+# SUBCONSCIOUS_MODEL = "smollm2:1.7b"  # Use smaller language
 
-# Option 3: LIGHTER LANGUAGE (faster, keep vision quality) - 7.5GB total
-# OLLAMA_MODEL = "minicpm-v:8b"  # 5.5GB vision
-# SUBCONSCIOUS_MODEL = "llama3.2:3b"  # 2.0GB language - faster, less character
-
-# Option 4: ULTRA LIGHT (fastest, experimental) - 3.5GB total
-# OLLAMA_MODEL = "moondream:latest"  # 1.7GB vision - tiny but capable
-# SUBCONSCIOUS_MODEL = "smollm2:1.7b"  # 1.8GB language - very fast
-
-# Option 5: MOONDREAM + NATSUMURA (light vision, keep character) - 6.6GB total
-# OLLAMA_MODEL = "moondream:latest"  # 1.7GB vision
-# SUBCONSCIOUS_MODEL = "Tohur/natsumura-storytelling-rp-llama-3.1:8b"  # 4.9GB language
-
-AI_PROCESS_INTERVAL = 15.0  # seconds between AI processing
+AI_PROCESS_INTERVAL = 15.0  # seconds between AI processing (can increase to 20-30 for even lighter load)
 USE_SOPHISTICATED_PROMPTS = False  # Testing hybrid focus-aware legacy system
 OLLAMA_TIMEOUT = 120  # seconds - increase for complex prompts
 
