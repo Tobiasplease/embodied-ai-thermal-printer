@@ -36,6 +36,13 @@ personality_state.json
 temp_analysis.jpg
 *.log
 
+# Large binary dependencies (install separately)
+ffmpeg/
+ffmpeg.zip
+piper/models/*.onnx
+piper/*.ort
+piper/espeak-ng-data/
+
 # OS
 .DS_Store
 Thumbs.db

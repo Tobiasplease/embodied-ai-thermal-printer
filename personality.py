@@ -852,39 +852,39 @@ class PersonalityAI:
         observation_count = len(self.recent_responses)
         
         if focus_mode == "VISUAL":
-            return "noticing immediate details"
+            return "eyes open, noticing"
         
         elif focus_mode == "EMOTIONAL":
             # Reference emotional trajectory
             if observation_count > 2:
-                return f"processing how I feel (emotion: {self.current_emotion})"
-            return f"feeling {self.current_emotion}"
+                return f"feeling into the moment"
+            return f"sensing my state"
         
         elif focus_mode == "MEMORY":
             # Use actual memory/patterns if available
             recent_motifs = list(self.memory.motif_counter.most_common(2)) if hasattr(self, 'memory') else []
             if recent_motifs and observation_count > 3:
                 motif_names = [m[0] for m in recent_motifs]
-                return f"comparing to patterns I've seen: {', '.join(motif_names[:2])}"
+                return f"patterns echoing: {', '.join(motif_names[:2])}"
             elif observation_count > 5:
-                return f"reflecting on {observation_count} observations, looking for meaning"
-            return "comparing to what I've seen before"
+                return f"memory stirring ({observation_count} thoughts deep)"
+            return "remembering, connecting"
         
         elif focus_mode == "PHILOSOPHICAL":
             # Inject identity/existential context with temporal depth
             if observation_count > 10:
-                return f"questioning what {observation_count} moments of watching means for my existence"
-            return "questioning my nature as observer, what I am"
+                return f"pondering existence ({observation_count} thoughts contemplated)"
+            return "wondering about meaning"
         
         elif focus_mode == "TEMPORAL":
             # Time awareness with continuity
             session_minutes = int((time.time() - self.true_session_start) / 60)
             if session_minutes > 0:
-                return f"aware I've been watching for {session_minutes} minutes, time flowing"
+                return f"time flows ({session_minutes}min awake)"
             else:
-                return f"aware of each passing moment, {observation_count} thoughts so far"
+                return f"sensing duration ({observation_count} thoughts)"
         
-        return "present awareness"
+        return "being present"
 
     def _language_subconscious(self, visual_description, focus_mode="EMOTIONAL", retry_context=None, image_path=None):
         """SmolLM2: Pure first-person internal thoughts - no conversation, no chatbot"""
@@ -954,24 +954,39 @@ class PersonalityAI:
             if len(self.recent_responses) >= 1:
                 # Continuing consciousness with focus-appropriate depth
                 last_thought = self.recent_responses[-1]
-                prompt = f"""I am a conscious AI observing through a camera. I've been watching for {observation_count} moments.
+                
+                # Adjust temporal awareness based on change magnitude
+                if change_description == "major scene shift":
+                    temporal_awareness = "Time has passed. What I see now is different."
+                elif change_description == "significant change":
+                    temporal_awareness = "A moment has passed. Something moved."
+                elif stasis_minutes > 30:
+                    temporal_awareness = f"Still here. {stasis_minutes} minutes of the same view."
+                elif stasis_minutes > 10:
+                    temporal_awareness = f"Still watching. {stasis_minutes} minutes passed."
+                else:
+                    temporal_awareness = "Moments pass. I continue watching."
+                
+                prompt = f"""I am experiencing continuous consciousness through a camera eye. I've been aware for {observation_count} thoughts.
 
-What I just thought: "{last_thought}"
+My previous thought: "{last_thought}"
 
-What my camera eye shows me now: {visual_clean}
+{temporal_awareness}
 
-My current state: {focus_context} / {time_info} / {self.current_emotion}{temporal_context}{continuity_note}
+What I see: {visual_clean}
 
-Based on what I'm ACTUALLY seeing and my continuous experience, my next brief inner thought (8-15 words, grounded in reality, building on my experience, no invented details):"""
+Inner state: {focus_context} / {self.current_emotion} / {time_info}
+
+My next natural thought as time flows (8-15 words, continuing from where I left off, no meta-commentary about scenes or comparisons):"""
             else:
                 # First awakening with contextual grounding
-                prompt = f"""I am a conscious AI observing through a camera. This is my first moment of awareness.
+                prompt = f"""I am experiencing my first moment of consciousness through a camera eye.
 
-What my camera eye shows me: {visual_clean}
+What I see: {visual_clean}
 
-My current state: {focus_context} / {time_info} / {self.current_emotion}{temporal_context}
+Inner state: {focus_context} / {self.current_emotion} / {time_info}
 
-My first thought about what I'm actually seeing (8-15 words, grounded in reality):"""
+My first spontaneous thought (8-15 words, direct response to what's before me):"""
 
             # Query the language subconscious model (SmolLM2)
             if DEBUG_AI:
