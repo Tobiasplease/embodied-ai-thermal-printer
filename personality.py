@@ -363,6 +363,16 @@ class PersonalityAI:
         self.last_reflection_time = time.time()
         self.reflection_interval = 120  # 2 minutes for more frequent memory consolidation
         self.reflection_enabled = True
+        
+        # Clean up any stale temp files from previous sessions (prevents "urn" hallucination)
+        try:
+            if os.path.exists("temp_analysis.jpg"):
+                os.remove("temp_analysis.jpg")
+                if DEBUG_AI:
+                    print("🧹 Removed stale temp_analysis.jpg")
+        except Exception as e:
+            if DEBUG_AI:
+                print(f"Note: Could not remove temp file: {e}")
     
     def analyze_image(self, image):
         """DUAL consciousness system - Vision + Language separation with intelligent retry"""
@@ -597,10 +607,11 @@ class PersonalityAI:
             # Vision model: Simple, direct instructions (moondream is small - keep it simple)
             system_prompt = """Describe what you see. Be factual and brief."""
 
+            # Always use same prompt for consistency
+            user_prompt = """What's in this scene?"""
+            
             if self.previous_image_path and os.path.exists(self.previous_image_path):
-                # Just describe current scene - let language model notice changes
-                user_prompt = """What's in this scene?"""
-
+                # Comparison mode - send both images
                 response = self._query_ollama_with_images(
                     system_prompt,
                     user_prompt, 
@@ -608,9 +619,7 @@ class PersonalityAI:
                 )
                 
             else:
-                # First observation - establish scene
-                user_prompt = """What's visible?"""
-
+                # First observation - send single image (but same prompt)
                 response = self._query_ollama_with_images(
                     system_prompt,
                     user_prompt, 
@@ -661,20 +670,22 @@ class PersonalityAI:
             if marker in output_lower:
                 return "garbage"
         
-        # Known hallucination words that moondream outputs when confused
-        hallucination_words = [
-            "urn",           # The famous urn hallucination
-            "ids for image", # Gibberish
-            "dresser",       # Random furniture
-            "wall",          # Generic single word
-            "room",          # Too generic alone
-            "space",         # Too generic alone
-            "area",          # Too generic alone
+        # Known hallucination patterns that moondream outputs when confused
+        # Check if the FIRST WORD is a known hallucination word
+        first_word = output_lower.split()[0] if output_lower.split() else ""
+        hallucination_starters = [
+            "urn",           # The famous urn hallucination - NEVER trust outputs starting with "urn"
+            "dresser",       # Random furniture hallucinations
         ]
         
-        # Check if output is ONLY a hallucination word (nothing else)
-        if output_lower in hallucination_words:
+        if first_word in hallucination_starters:
             return "garbage"
+        
+        # Single-word outputs that are too generic
+        if len(output_lower.split()) == 1:
+            generic_words = ["wall", "room", "space", "area", "table", "floor", "ceiling"]
+            if output_lower in generic_words:
+                return "garbage"
         
         # Very short outputs (less than 10 chars) with no spaces = likely garbage
         if len(vision_output.strip()) < 10 and ' ' not in vision_output.strip():
