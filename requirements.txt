@@ -1,8 +1,16 @@
-# Minimal dependencies for clean embodied AI system
-opencv-python>=4.8.0
-requests>=2.31.0
-pywin32>=306
-syllapy>=0.8.1
-pillow>=10.0.0
-numpy>=1.24.0
-pyserial>=3.5  # For hand controller hardware (optional)
+# Python dependencies for embodied AI system
+opencv-python>=4.8.0       # Camera input
+requests>=2.31.0           # Ollama API calls
+pywin32>=306               # Windows text-to-speech (fallback)
+syllapy>=0.8.1             # Syllable counting for TTS
+pillow>=10.0.0             # Image processing
+numpy>=1.24.0              # Array operations
+pyserial>=3.5              # Hand controller hardware (optional)
+
+# Additional system requirements (install separately):
+# - Ollama: https://ollama.ai/download
+#   * ollama pull moondream:latest (1.7GB vision model)
+#   * ollama pull Tohur/natsumura-storytelling-rp-llama-3.1:8b (4.9GB language model)
+# - eSpeak NG: Download and run install_espeak.py
+#   * Will download and install eSpeak NG for Windows
+#   * Provides natural whisper voice synthesis
