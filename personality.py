@@ -598,8 +598,8 @@ class PersonalityAI:
             system_prompt = """Describe what you see. Be factual and brief."""
 
             if self.previous_image_path and os.path.exists(self.previous_image_path):
-                # Compare two frames - what changed?
-                user_prompt = """What's in this scene? What changed?"""
+                # Just describe current scene - let language model notice changes
+                user_prompt = """What's in this scene?"""
 
                 response = self._query_ollama_with_images(
                     system_prompt,

@@ -39,9 +39,18 @@ temp_analysis.jpg
 # Large binary dependencies (install separately)
 ffmpeg/
 ffmpeg.zip
+espeak-ng-installer.msi
 piper/models/*.onnx
 piper/*.ort
 piper/espeak-ng-data/
+
+# Test files
+test_*.wav
+test_*.jpg
+test_frame.*
+
+# Temporary/backup files
+temp_old_*.py
 
 # OS
 .DS_Store
