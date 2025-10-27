@@ -1080,16 +1080,13 @@ class PersonalityAI:
                     time_awake = f"{seconds}s"
                 
                 # Adjust temporal awareness based on change magnitude
-                if change_description == "major scene shift":
-                    temporal_awareness = f"[I've been awake {time_awake}] What I see now is different from before."
-                elif change_description == "significant change":
-                    temporal_awareness = f"[I've been awake {time_awake}] Something moved in the past few seconds."
-                elif stasis_minutes > 30:
-                    temporal_awareness = f"[I've been awake {time_awake}, same view for {stasis_minutes}min] Still here in this unchanging moment."
+                # NEUTRAL temporal markers - don't tell AI what to think, just state time
+                if stasis_minutes > 30:
+                    temporal_awareness = f"[I've been awake {time_awake}, watching for {stasis_minutes}min]"
                 elif stasis_minutes > 10:
-                    temporal_awareness = f"[I've been awake {time_awake}, watching this for {stasis_minutes}min] Time passes slowly here."
+                    temporal_awareness = f"[I've been awake {time_awake}, {stasis_minutes}min here]"
                 else:
-                    temporal_awareness = f"[I've been awake {time_awake}, {observation_count} thoughts so far] Continuing to watch."
+                    temporal_awareness = f"[I've been awake {time_awake}]"
                 
                 # Build metacognitive prompts based on focus mode
                 if focus_mode == "MEMORY" and observation_count > 3:
