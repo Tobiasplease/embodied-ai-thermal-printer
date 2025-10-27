@@ -646,7 +646,7 @@ class PersonalityAI:
         if not vision_output or len(vision_output.strip()) < 3:
             return "garbage"
         
-        output_lower = vision_output.lower()
+        output_lower = vision_output.lower().strip()
         
         # Obvious garbage indicators
         garbage_markers = [
@@ -661,11 +661,24 @@ class PersonalityAI:
             if marker in output_lower:
                 return "garbage"
         
-        # Very short/cryptic outputs (likely hallucinations)
-        if len(vision_output.strip()) < 10 and not vision_output.strip().count(' ') >= 2:
-            # Single words or very short fragments
-            if vision_output.strip() in ["urn", "ids for image", "dresser", "wall"]:
-                return "unclear"
+        # Known hallucination words that moondream outputs when confused
+        hallucination_words = [
+            "urn",           # The famous urn hallucination
+            "ids for image", # Gibberish
+            "dresser",       # Random furniture
+            "wall",          # Generic single word
+            "room",          # Too generic alone
+            "space",         # Too generic alone
+            "area",          # Too generic alone
+        ]
+        
+        # Check if output is ONLY a hallucination word (nothing else)
+        if output_lower in hallucination_words:
+            return "garbage"
+        
+        # Very short outputs (less than 10 chars) with no spaces = likely garbage
+        if len(vision_output.strip()) < 10 and ' ' not in vision_output.strip():
+            return "garbage"
         
         # Model expressing uncertainty
         uncertainty_markers = [
