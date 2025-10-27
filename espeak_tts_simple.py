@@ -4,10 +4,12 @@ Simple eSpeak TTS using subprocess (works with any eSpeak installation)
 import subprocess
 import os
 import logging
+import threading
+import queue
 from typing import Optional
 
 class ESpeakTTS:
-    """eSpeak NG text-to-speech with built-in whisper support"""
+    """eSpeak NG text-to-speech with built-in whisper support and queue to prevent overlap"""
     
     def __init__(
         self,
@@ -68,6 +70,13 @@ class ESpeakTTS:
         self.pitch = pitch
         self.use_whisper = use_whisper
         
+        # Queue system to prevent overlapping speech
+        self.speech_queue = queue.Queue()
+        self.is_speaking = False
+        self.should_stop = False
+        self.worker_thread = threading.Thread(target=self._speech_worker, daemon=True)
+        self.worker_thread.start()
+        
         logging.info(f"✅ eSpeak TTS initialized: {voice}" + 
                     (" +whisper" if use_whisper else ""))
         logging.info(f"   Using: {self.espeak_path}")
@@ -79,19 +88,28 @@ class ESpeakTTS:
             voice_str = f"{voice_str}+whisper"
         return voice_str
     
-    def speak(self, text: str, use_whisper: Optional[bool] = None) -> bool:
-        """
-        Speak text using eSpeak
-        
-        Args:
-            text: Text to speak
-            use_whisper: Override instance whisper setting (optional)
-        
-        Returns:
-            True if successful
-        """
+    def _speech_worker(self):
+        """Worker thread that processes speech queue sequentially"""
+        while not self.should_stop:
+            try:
+                # Get speech request from queue (blocking with timeout)
+                item = self.speech_queue.get(timeout=0.5)
+                
+                if item:
+                    text, use_whisper, speed_override = item
+                    self._do_speak(text, use_whisper, speed_override)
+                    
+            except queue.Empty:
+                continue
+            except Exception as e:
+                logging.error(f"Speech worker error: {e}")
+    
+    def _do_speak(self, text: str, use_whisper: Optional[bool], speed_override: Optional[int]) -> bool:
+        """Actually perform the speech (called by worker thread)"""
         if not text or not text.strip():
             return False
+        
+        self.is_speaking = True
         
         try:
             # Determine which voice to use
@@ -100,16 +118,19 @@ class ESpeakTTS:
             else:
                 voice_str = self._get_voice_string()
             
+            # Use speed override if provided
+            speed = speed_override if speed_override is not None else self.speed
+            
             # Build command
             cmd = [
                 self.espeak_path,
                 "-v", voice_str,
-                "-s", str(self.speed),
+                "-s", str(speed),
                 "-p", str(self.pitch),
                 text
             ]
             
-            # Run eSpeak
+            # Run eSpeak (this blocks until speech completes)
             result = subprocess.run(
                 cmd,
                 capture_output=True,
@@ -126,6 +147,31 @@ class ESpeakTTS:
         except Exception as e:
             logging.error(f"eSpeak error: {e}")
             return False
+        finally:
+            self.is_speaking = False
+    
+    def speak(self, text: str, use_whisper: Optional[bool] = None, speed: Optional[int] = None) -> bool:
+        """
+        Queue text for speech (non-blocking)
+        
+        Args:
+            text: Text to speak
+            use_whisper: Override instance whisper setting (optional)
+            speed: Override speed for this utterance (optional)
+        
+        Returns:
+            True if queued successfully
+        """
+        if not text or not text.strip():
+            return False
+        
+        try:
+            # Add to queue (non-blocking)
+            self.speech_queue.put((text, use_whisper, speed))
+            return True
+        except Exception as e:
+            logging.error(f"Failed to queue speech: {e}")
+            return False
     
     def set_whisper(self, enabled: bool):
         """Enable or disable whisper mode"""
@@ -136,6 +182,20 @@ class ESpeakTTS:
         """Change voice"""
         self.voice = voice
         logging.info(f"Voice changed to: {voice}")
+    
+    def clear_queue(self):
+        """Clear all pending speech"""
+        while not self.speech_queue.empty():
+            try:
+                self.speech_queue.get_nowait()
+            except queue.Empty:
+                break
+    
+    def stop(self):
+        """Stop the voice system"""
+        self.should_stop = True
+        if self.worker_thread:
+            self.worker_thread.join(timeout=2.0)
     
     def list_voices(self):
         """List available voices"""

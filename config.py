@@ -2,8 +2,8 @@
 # Simple, single-source configuration
 
 # Camera Settings
-CAMERA_INDEX = 0
-CAMERA_WIDTH = 640  
+CAMERA_INDEX = 0  # 0 = built-in laptop camera, 1 = external USB webcam
+CAMERA_WIDTH = 640  # Back to higher resolution for better AI vision
 CAMERA_HEIGHT = 480
 CAMERA_FPS = 30
 
@@ -13,9 +13,9 @@ OLLAMA_URL = "http://localhost:11434"
 
 # === CURRENT SETUP (uncomment ONE set) ===
 
-# Option 1: ORIGINAL (best quality, slowest) - 10.4GB total ⭐ ACTIVE
-OLLAMA_MODEL = "minicpm-v:8b"  # 5.5GB vision
-SUBCONSCIOUS_MODEL = "Tohur/natsumura-storytelling-rp-llama-3.1:8b"  # 4.9GB language
+# Option 1: ORIGINAL (best quality, slowest) - 10.4GB total - Desktop only
+# OLLAMA_MODEL = "minicpm-v:8b"  # 5.5GB vision
+# SUBCONSCIOUS_MODEL = "Tohur/natsumura-storytelling-rp-llama-3.1:8b"  # 4.9GB language
 
 # Option 2: LIGHTER VISION (good balance) - 10.4GB total  
 # OLLAMA_MODEL = "minicpm-v:latest"  # 5.5GB vision (same as 8b currently)
@@ -29,11 +29,11 @@ SUBCONSCIOUS_MODEL = "Tohur/natsumura-storytelling-rp-llama-3.1:8b"  # 4.9GB lan
 # OLLAMA_MODEL = "moondream:latest"  # 1.7GB vision - tiny but capable
 # SUBCONSCIOUS_MODEL = "smollm2:1.7b"  # 1.8GB language - very fast
 
-# Option 5: MOONDREAM + NATSUMURA (light vision, keep character) - 6.6GB total
-# OLLAMA_MODEL = "moondream:latest"  # 1.7GB vision
-# SUBCONSCIOUS_MODEL = "Tohur/natsumura-storytelling-rp-llama-3.1:8b"  # 4.9GB language
+# Option 5: MOONDREAM + NATSUMURA (light vision, keep character) - 6.6GB total ⭐ ACTIVE (6GB VRAM)
+OLLAMA_MODEL = "moondream:latest"  # 1.7GB vision
+SUBCONSCIOUS_MODEL = "Tohur/natsumura-storytelling-rp-llama-3.1:8b"  # 4.9GB language
 
-AI_PROCESS_INTERVAL = 15.0  # seconds between AI processing
+AI_PROCESS_INTERVAL = 5.0  # seconds between AI processing - faster, more reactive
 USE_SOPHISTICATED_PROMPTS = False  # Testing hybrid focus-aware legacy system
 OLLAMA_TIMEOUT = 120  # seconds - increase for complex prompts
 
@@ -64,8 +64,8 @@ VOICE_ENGINE = "espeak"  # "espeak" (lo-fi, whisper), "windows" (robotic), or "p
 
 # eSpeak TTS Settings (if VOICE_ENGINE = "espeak")
 ESPEAK_VOICE = "en-us+whisper"  # Voice with variants: en-us+whisper, en+f3+whisper, en+croak, etc.
-ESPEAK_SPEED = 130  # Words per minute: 80-450 (slower for whisper)
-ESPEAK_PITCH = 85  # Pitch: 0-99 (lower = deeper/more masculine)
+ESPEAK_SPEED = 150  # Words per minute: 80-450 (faster = more natural whisper)
+ESPEAK_PITCH = 50  # Pitch: 0-99 (neutral pitch sounds less demonic)
 
 # Piper TTS Settings (if VOICE_ENGINE = "piper")
 VOICE_MODEL = "en_US-kristin-medium"  # Voice model: kristin (F), ryan (M), lessac (F)

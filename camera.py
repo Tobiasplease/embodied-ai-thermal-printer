@@ -52,6 +52,9 @@ class Camera:
     def start(self):
         """Initialize camera with error handling"""
         try:
+            # ALWAYS show which camera we're opening
+            print(f"🎥 Opening Camera {CAMERA_INDEX} (0=built-in, 1=external)...")
+            
             # Try DirectShow first (Windows), fallback to default
             self.cap = cv2.VideoCapture(CAMERA_INDEX, cv2.CAP_DSHOW)
             
@@ -71,8 +74,7 @@ class Camera:
             actual_width = self.cap.get(cv2.CAP_PROP_FRAME_WIDTH)
             actual_height = self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT)
             
-            if DEBUG_CAMERA:
-                print(f"Camera initialized: {actual_width}x{actual_height}")
+            print(f"✅ Camera {CAMERA_INDEX} initialized: {int(actual_width)}x{int(actual_height)}")
             
             self.is_open = True
             return True

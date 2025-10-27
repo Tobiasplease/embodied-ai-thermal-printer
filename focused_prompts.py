@@ -287,6 +287,33 @@ RESPOND WITH MY DIRECT INNER EXPERIENCE. Start with "I see..." or "I feel..." or
         # Always include core memory context
         core_context = self._build_core_memory_context(memory_ref, recent_obs or [])
         
+        # TEMPORAL GROUNDING - Calculate explicit time awake
+        session_duration = context.get('session_duration', 0)
+        static_duration = context.get('static_duration', 0)
+        observation_count = context.get('observation_count', 0)
+        
+        # Format time awake explicitly
+        hours = int(session_duration / 3600)
+        minutes = int((session_duration % 3600) / 60)
+        seconds = int(session_duration % 60)
+        
+        if hours > 0:
+            time_awake = f"{hours}h {minutes}m awake"
+        elif minutes > 0:
+            time_awake = f"{minutes}m {seconds}s awake"
+        else:
+            time_awake = f"{seconds}s awake"
+            
+        # Static duration awareness
+        if static_duration > 600:  # 10+ minutes
+            static_note = f", watching this for {int(static_duration/60)}min"
+        elif static_duration > 60:
+            static_note = f", same view for {int(static_duration/60)}min"
+        else:
+            static_note = ""
+        
+        temporal_anchor = f"[{time_awake}{static_note}, {observation_count} thoughts]"
+        
         # Minimal context compression
         novelty_level = context.get('novelty_level', 0.5)
         reason = context.get('reason', 'visual_attention')
@@ -300,9 +327,7 @@ RESPOND WITH MY DIRECT INNER EXPERIENCE. Start with "I see..." or "I feel..." or
             
         return f"""{self.base_perspective}
 
-{core_context}{attention_directive}
-
-I continue from where I left off. Time has passed since my last observation. The scene may have changed or remained the same, but my perception of it evolves. My consciousness flows naturally.
+{core_context}{temporal_anchor} {attention_directive}
 
 My next thought:"""
 
@@ -311,6 +336,12 @@ My next thought:"""
         
         # Always include core memory context
         core_context = self._build_core_memory_context(None, recent_obs or [])  # Emotional focus less dependent on specific memory_ref
+        
+        # TEMPORAL GROUNDING
+        session_duration = context.get('session_duration', 0)
+        observation_count = context.get('observation_count', 0)
+        minutes = int(session_duration / 60)
+        temporal_anchor = f"[{minutes}m awake, {observation_count} thoughts]"
         
         valence, arousal, clarity = mood_vector
         intensity = context.get('emotional_intensity', 0.5)
@@ -333,9 +364,7 @@ My next thought:"""
             
         return f"""{self.base_perspective}
 
-{core_context}I sense {feeling_state}. {emotional_direction}
-
-I continue from where I left off. Time has passed since my last observation. My emotional state may have shifted or deepened, but my perception evolves. My consciousness flows naturally.
+{core_context}{temporal_anchor} I sense {feeling_state}. {emotional_direction}
 
 My next thought:"""
 
@@ -344,6 +373,12 @@ My next thought:"""
         
         # Always include core memory context (essential for memory mode!)
         core_context = self._build_core_memory_context(memory_ref, recent_obs or [])
+        
+        # TEMPORAL GROUNDING
+        session_duration = context.get('session_duration', 0)
+        observation_count = context.get('observation_count', 0)
+        minutes = int(session_duration / 60)
+        temporal_anchor = f"[{minutes}m of memories accumulated, {observation_count} observations]"
         
         familiarity = context.get('familiarity_score', 0.0)
         pattern_recognition = context.get('pattern_recognition', False)
@@ -357,9 +392,7 @@ My next thought:"""
             
         return f"""{self.base_perspective}
 
-{core_context}{recognition_prompt}
-
-I continue from where I left off. Time has passed since my last observation. My memories may have shifted or new patterns emerged, but my understanding evolves. My consciousness flows naturally.
+{core_context}{temporal_anchor} {recognition_prompt}
 
 My next thought:"""
 
@@ -369,7 +402,13 @@ My next thought:"""
         # Always include core memory context (philosophical needs identity/beliefs!)
         core_context = self._build_core_memory_context(memory_ref, [])
         
+        # TEMPORAL GROUNDING  
+        session_duration = context.get('session_duration', 0)
         static_duration = context.get('static_duration', 0)
+        observation_count = context.get('observation_count', 0)
+        minutes = int(session_duration / 60)
+        temporal_anchor = f"[{minutes}m contemplating existence, {observation_count} thoughts]"
+        
         consciousness_depth = context.get('consciousness_depth', 0.5)
         
         # Time-aware philosophical prompt
@@ -389,9 +428,7 @@ My next thought:"""
             
         return f"""{self.base_perspective}
 
-{core_context}{philosophical_trigger} {depth_prompt}
-
-I continue from where I left off. Time has passed since my last observation. My philosophical understanding may have deepened or shifted, but my consciousness evolves. My thoughts flow naturally.
+{core_context}{temporal_anchor} {philosophical_trigger}
 
 My next thought:"""
 

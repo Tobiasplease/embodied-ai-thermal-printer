@@ -27,7 +27,7 @@ from hand_control_integration import HandControlInterface, personality_to_hand_e
 from thermal_integration import create_thermal_printer
 from config import (
     AI_PROCESS_INTERVAL, DEBUG_CAMERA, DEBUG_AI, DEBUG_MOTOR,
-    VERBOSE_OUTPUT, CAMERA_WIDTH, CAMERA_HEIGHT, SHOW_CAMERA_PREVIEW,
+    VERBOSE_OUTPUT, CAMERA_INDEX, CAMERA_WIDTH, CAMERA_HEIGHT, SHOW_CAMERA_PREVIEW,
     PREVIEW_WIDTH, PREVIEW_HEIGHT, THERMAL_PRINTER_ENABLED,
     VOICE_ENABLED, VOICE_ENGINE, VOICE_MODEL, VOICE_ALL_THOUGHTS, VOICE_INTERVAL,
     WINDOWS_TTS_RATE, WINDOWS_TTS_VOLUME, WINDOWS_TTS_GENDER,
@@ -265,10 +265,15 @@ class EmbodiedAI:
         print("🚀 Embodied AI v2 starting main loop...")
         
         try:
-            # EXACT machine.py camera pattern - direct VideoCapture
-            cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
+            # Direct VideoCapture using configured camera index
+            print(f"🎥 Opening Camera {CAMERA_INDEX} (0=built-in, 1=external)...")
+            cap = cv2.VideoCapture(CAMERA_INDEX, cv2.CAP_DSHOW)
             cap.set(cv2.CAP_PROP_FRAME_WIDTH, CAMERA_WIDTH)
             cap.set(cv2.CAP_PROP_FRAME_HEIGHT, CAMERA_HEIGHT)
+            
+            actual_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+            actual_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            print(f"✅ Camera {CAMERA_INDEX} initialized: {actual_width}x{actual_height}")
             
             while self.running:
                 # EXACT machine.py pattern: ret, frame = cap.read() every loop
