@@ -275,6 +275,17 @@ class EmbodiedAI:
             actual_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
             print(f"✅ Camera {CAMERA_INDEX} initialized: {actual_width}x{actual_height}")
             
+            # Let camera stabilize before first AI processing (exposure/focus adjustment)
+            print("🔥 Camera warming up (2 seconds)...")
+            warmup_start = time.time()
+            while time.time() - warmup_start < 2.0:
+                ret, frame = cap.read()  # Keep reading frames during warmup
+                if SHOW_CAMERA_PREVIEW:
+                    display_frame = cv2.resize(frame, (PREVIEW_WIDTH, PREVIEW_HEIGHT))
+                    cv2.imshow("🤖 AI Inner Monologue", display_frame)
+                    cv2.waitKey(1)
+            print("✅ Camera ready")
+            
             while self.running:
                 # EXACT machine.py pattern: ret, frame = cap.read() every loop
                 ret, frame = cap.read()
