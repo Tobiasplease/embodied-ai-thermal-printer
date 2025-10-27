@@ -76,6 +76,16 @@ class Camera:
             
             print(f"✅ Camera {CAMERA_INDEX} initialized: {int(actual_width)}x{int(actual_height)}")
             
+            # Warm up camera - discard first few frames for better quality
+            # (First frames often dark/blurry as camera adjusts exposure/focus)
+            if DEBUG_CAMERA:
+                print("🔥 Warming up camera (discarding first 5 frames)...")
+            for i in range(5):
+                self.cap.read()  # Discard frame
+                time.sleep(0.1)  # Small delay between frames
+            if DEBUG_CAMERA:
+                print("✅ Camera warmed up")
+            
             self.is_open = True
             return True
             
