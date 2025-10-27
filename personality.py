@@ -364,6 +364,9 @@ class PersonalityAI:
         self.reflection_interval = 120  # 2 minutes for more frequent memory consolidation
         self.reflection_enabled = True
         
+        # Baseline understanding that grows over time (replaces "PAST INSIGHTS")
+        self.baseline_context = ""  # Empty at start, updated by reflections
+        
         # Clean up any stale temp files from previous sessions (prevents "urn" hallucination)
         try:
             if os.path.exists("temp_analysis.jpg"):
@@ -1055,6 +1058,15 @@ class PersonalityAI:
                 # Continuing consciousness with metacognitive scaffolding
                 last_thought = self.recent_responses[-1]
                 
+                # Build memory context - show progression
+                if observation_count > 3:
+                    thought_history = " → ".join(self.recent_responses[-3:-1])  # Last 2 before current
+                    memory_line = f"\nRecent thoughts: {thought_history}"
+                elif observation_count > 1:
+                    memory_line = f"\nLast thought: \"{self.recent_responses[-2]}\""
+                else:
+                    memory_line = ""
+                
                 # EXPLICIT TEMPORAL GROUNDING - tell the AI exactly how long it's been awake
                 hours = int(session_time / 3600)
                 minutes = int((session_time % 3600) / 60)
@@ -1091,9 +1103,11 @@ class PersonalityAI:
                 else:
                     metacog_guidance = None
                 
-                # Get compressed insights for long-term memory context
-                insights = self.memory_ref.get_compressed_insights(2) if hasattr(self.memory_ref, 'get_compressed_insights') else []
-                insight_context = f"\n\nPAST INSIGHTS (from my accumulated memory): {' | '.join(insights)}" if insights else ""
+                # Weave in baseline understanding naturally (from compression)
+                if self.baseline_context:
+                    context_line = f"(I know: {self.baseline_context})"
+                else:
+                    context_line = ""
                 
                 # Build vision status context based on clarity
                 if vision_clarity == "error":
@@ -1108,11 +1122,11 @@ class PersonalityAI:
                 
                 if metacog_guidance:
                     if vision_status:
-                        prompt = f"""I've been awake {observation_count} moments.
+                        prompt = f"""I've been awake {observation_count} moments. {context_line}{memory_line}
 
-Just thought: "{last_thought}"
+Current thought: "{last_thought}"
 
-{temporal_awareness}{insight_context}
+{temporal_awareness}
 
 {vision_status}
 {perception_line}
@@ -1125,11 +1139,11 @@ Camera's broken - I should say so, not make stuff up.
 
 What am I thinking? (15-25 words, just talk naturally):"""
                     else:
-                        prompt = f"""I've been awake {observation_count} moments.
+                        prompt = f"""I've been awake {observation_count} moments. {context_line}{memory_line}
 
-Just thought: "{last_thought}"
+Current thought: "{last_thought}"
 
-{temporal_awareness}{insight_context}
+{temporal_awareness}
 
 {perception_line}
 
@@ -1140,11 +1154,11 @@ Just thought: "{last_thought}"
 What am I thinking? (15-25 words):"""
                 else:
                     if vision_status:
-                        prompt = f"""I've been awake {observation_count} moments.
+                        prompt = f"""I've been awake {observation_count} moments. {context_line}{memory_line}
 
-Just thought: "{last_thought}"
+Current thought: "{last_thought}"
 
-{temporal_awareness}{insight_context}
+{temporal_awareness}
 
 {vision_status}
 {perception_line}
@@ -1155,11 +1169,11 @@ Camera's glitching - be honest about it.
 
 What am I thinking now? (10-20 words):"""
                     else:
-                        prompt = f"""I've been awake {observation_count} moments.
+                        prompt = f"""I've been awake {observation_count} moments. {context_line}{memory_line}
 
-Just thought: "{last_thought}"
+Current thought: "{last_thought}"
 
-{temporal_awareness}{insight_context}
+{temporal_awareness}
 
 {perception_line}
 
@@ -2857,7 +2871,7 @@ Keep brief (2 sentences). This consolidation is invisible background processing.
         return self._query_ollama(reflection_prompt, image_path)
     
     def _compress_memory_on_reflection(self, reflection):
-        """Compress recent memories into higher-level insights during reflection"""
+        """Compress recent memories into updated baseline understanding"""
         if not hasattr(self.memory_ref, 'observations') or len(self.memory_ref.observations) < 10:
             return  # Not enough memories to compress yet
         
@@ -2870,23 +2884,30 @@ Keep brief (2 sentences). This consolidation is invisible background processing.
         # Create a compressed summary of the pattern
         obs_text = " → ".join(recent_obs[-10:])  # Last 10 observations
         
+        # Build compression prompt that updates baseline understanding
         compression_prompt = f"""Recent stream of consciousness (last 10 thoughts):
 {obs_text}
 
-Current reflection: {reflection}
+Current baseline understanding: {self.baseline_context if self.baseline_context else "Nothing established yet"}
 
-Compress these observations into ONE concise insight about what I've been experiencing. What's the essential pattern or theme? (Max 15 words)
+TASK: Update the baseline understanding to reflect what's now familiar/established. What do I now know about:
+- My environment/surroundings
+- Who/what I keep seeing
+- My situation/state
 
-Compressed insight:"""
+Write 1-2 sentences describing my established context (NOT my feelings, just what's become familiar).
+
+Updated baseline:"""
         
         compressed = self._query_ollama(compression_prompt)
         
-        if compressed and len(compressed.strip()) > 5:
-            # Store as a higher-level belief/insight
-            self.memory_ref.add_observation(f"INSIGHT: {compressed.strip()}", confidence=1.0, obs_type='compressed_memory')
+        if compressed and len(compressed.strip()) > 10:
+            # Update baseline context instead of storing as observation
+            self.baseline_context = compressed.strip()
             
             if DEBUG_AI:
-                print(f"🗜️ Memory compressed: {compressed.strip()}")
+                print(f"🗜️ Baseline updated: {self.baseline_context}")
+    
     
     def _extract_mood_from_reflection(self, reflection):
         """Extract mood rating from reflection text (like legacy system)"""
