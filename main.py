@@ -31,14 +31,27 @@ from config import (
     PREVIEW_WIDTH, PREVIEW_HEIGHT, THERMAL_PRINTER_ENABLED,
     VOICE_ENABLED, VOICE_ENGINE, VOICE_MODEL, VOICE_ALL_THOUGHTS, VOICE_INTERVAL,
     WINDOWS_TTS_RATE, WINDOWS_TTS_VOLUME, WINDOWS_TTS_GENDER,
-    ESPEAK_VOICE, ESPEAK_SPEED, ESPEAK_PITCH
+    ESPEAK_VOICE, ESPEAK_SPEED, ESPEAK_PITCH,
+    LIPSYNC_ENABLED, LIPSYNC_PORT, LIPSYNC_BAUD
 )
+
+# Import lip sync FIRST (optional) - direct audio version
+if LIPSYNC_ENABLED:
+    try:
+        from lipsync_direct_audio import DirectAudioLipSync
+    except ImportError as e:
+        print(f"⚠️ Lip sync not available: {e}")
+        LIPSYNC_ENABLED = False
 
 # Import voice system (optional)
 VOICE_AVAILABLE = False
 if VOICE_ENABLED:
     try:
-        if VOICE_ENGINE == "espeak":
+        if VOICE_ENGINE == "espeak" and LIPSYNC_ENABLED:
+            # Use integrated eSpeak with lip sync
+            from espeak_tts_with_lipsync import ESpeakWithLipSync as VoiceSystem
+            VOICE_AVAILABLE = True
+        elif VOICE_ENGINE == "espeak":
             from espeak_tts_simple import ESpeakTTS as VoiceSystem
             VOICE_AVAILABLE = True
         elif VOICE_ENGINE == "windows":
@@ -117,6 +130,7 @@ class EmbodiedAI:
         self.hand_control = None
         self.thermal_printer = None
         self.voice_system = None
+        self.lipsync = None
         
         # Timing controls - avoid threading issues
         self.last_ai_process_time = 0
@@ -124,6 +138,11 @@ class EmbodiedAI:
         self.last_status_time = 0
         self.last_voice_time = 0  # Track last voice output
         self.ai_processing_lock = threading.Lock()  # Prevent concurrent AI processing
+
+        # Dynamic pacing based on scene activity
+        self.current_ai_interval = AI_PROCESS_INTERVAL
+        self.last_face_position = None
+        self.face_movement_detected = False
         
         # Frame processing
         self.frame_count = 0
@@ -184,20 +203,48 @@ class EmbodiedAI:
             self.thermal_printer = create_thermal_printer(enabled=THERMAL_PRINTER_ENABLED)
             self.thermal_printer.start()
 
+            # Initialize lip sync FIRST (if needed for eSpeak)
+            if LIPSYNC_ENABLED and VOICE_ENGINE == "espeak":
+                try:
+                    print("👄 Initializing direct audio lip sync...")
+                    self.lipsync = DirectAudioLipSync(
+                        port=LIPSYNC_PORT,
+                        baud=LIPSYNC_BAUD,
+                        enabled=True
+                    )
+                    print(f"✅ Direct audio lip sync ready ({LIPSYNC_PORT})")
+                except Exception as e:
+                    print(f"⚠️ Lip sync disabled: {e}")
+                    self.lipsync = None
+            else:
+                self.lipsync = None
+
             # Initialize voice system (optional)
             if VOICE_ENABLED and VOICE_AVAILABLE:
                 print("🔊 Initializing voice system...")
-                
+
                 if VOICE_ENGINE == "espeak":
-                    # eSpeak TTS with whisper
+                    # eSpeak TTS with or without lip sync
                     try:
-                        self.voice_system = VoiceSystem(
-                            voice=ESPEAK_VOICE.split('+')[0],  # Base voice (e.g., "en-us")
-                            speed=ESPEAK_SPEED,
-                            pitch=ESPEAK_PITCH,
-                            use_whisper='+whisper' in ESPEAK_VOICE
-                        )
-                        print(f"✅ eSpeak TTS ready (voice: {ESPEAK_VOICE}, {ESPEAK_SPEED} wpm)")
+                        if LIPSYNC_ENABLED and self.lipsync:
+                            # Use integrated version with lip sync
+                            self.voice_system = VoiceSystem(
+                                voice=ESPEAK_VOICE.split('+')[0],
+                                speed=ESPEAK_SPEED,
+                                pitch=ESPEAK_PITCH,
+                                use_whisper='+whisper' in ESPEAK_VOICE,
+                                lipsync_controller=self.lipsync
+                            )
+                            print(f"✅ eSpeak TTS with lip sync ready (voice: {ESPEAK_VOICE}, {ESPEAK_SPEED} wpm)")
+                        else:
+                            # Regular eSpeak without lip sync
+                            self.voice_system = VoiceSystem(
+                                voice=ESPEAK_VOICE.split('+')[0],
+                                speed=ESPEAK_SPEED,
+                                pitch=ESPEAK_PITCH,
+                                use_whisper='+whisper' in ESPEAK_VOICE
+                            )
+                            print(f"✅ eSpeak TTS ready (voice: {ESPEAK_VOICE}, {ESPEAK_SPEED} wpm)")
                         if VOICE_ALL_THOUGHTS:
                             print("   🎙️ Voice mode: EVERY thought")
                         else:
@@ -291,12 +338,19 @@ class EmbodiedAI:
                 ret, frame = cap.read()
                 if not ret:
                     continue
-                
+
                 current_time = time.time()
                 self.frame_count += 1
-                
-                # AI processing in SEPARATE THREAD (EXACT machine.py pattern)
-                if current_time - self.last_ai_process_time >= AI_PROCESS_INTERVAL:
+
+                # Detect face movement for dynamic pacing (every 5 frames to save CPU)
+                if self.frame_count % 5 == 0:
+                    self._detect_face_movement(frame)
+
+                # Calculate dynamic interval based on scene activity
+                self.current_ai_interval = self._calculate_dynamic_interval()
+
+                # AI processing in SEPARATE THREAD with dynamic interval
+                if current_time - self.last_ai_process_time >= self.current_ai_interval:
                     # Only start new AI thread if previous one is complete
                     if self.ai_processing_lock.acquire(blocking=False):  # Non-blocking acquire
                         if DEBUG_AI:
@@ -450,33 +504,57 @@ class EmbodiedAI:
             if DEBUG_AI:
                 print(f"🔓 AI processing lock released")
     
+    def _get_emotional_voice_params(self):
+        """Get speed/pitch variations based on current emotion"""
+        if not self.personality:
+            return None, None
+
+        emotion = self.personality.current_emotion
+
+        # Emotion-based voice variations (whisper with emotional character)
+        emotion_params = {
+            'excited': {'speed': 170, 'pitch': 60},      # Faster, higher
+            'curious': {'speed': 155, 'pitch': 55},      # Slightly faster, slightly higher
+            'alert': {'speed': 165, 'pitch': 58},        # Fast, elevated
+            'wondering': {'speed': 140, 'pitch': 48},    # Slower, contemplative
+            'confused': {'speed': 135, 'pitch': 45},     # Slow, lower
+            'contemplative': {'speed': 130, 'pitch': 42}, # Very slow, deeper
+            'peaceful': {'speed': 140, 'pitch': 48},     # Calm, neutral
+            'engaged': {'speed': 150, 'pitch': 50},      # Normal baseline
+            'focused': {'speed': 145, 'pitch': 48},      # Steady
+        }
+
+        params = emotion_params.get(emotion, {'speed': 150, 'pitch': 50})
+        return params['speed'], params['pitch']
+
     def _speak_async(self, text, total_caption_words=None, caption_version=None):
-        """Speak text in a separate thread to avoid blocking camera loop"""
+        """Speak text with emotional variation in a separate thread"""
         if not self.voice_system or not text:
             return
-        
+
         def speak_worker():
             try:
                 # BEFORE speaking, check if caption is still current (abort if new caption arrived)
                 if caption_version is not None and caption_version != self.caption_version:
                     # Old caption - silently abort (new caption is more important)
                     return
-                
-                # If this is part of a verbose caption, speed up
+
+                # Get emotional voice variations
+                emotion_speed, emotion_pitch = self._get_emotional_voice_params()
+
+                # If this is part of a verbose caption, speed up further
                 if total_caption_words and total_caption_words > 30:
-                    # Save original speed
-                    original_speed = self.voice_system.speed
-                    # Speed up by 20% for long captions
-                    self.voice_system.speed = int(original_speed * 1.2)
-                    self.voice_system.speak(text)
-                    # Restore original speed
-                    self.voice_system.speed = original_speed
+                    speed = int(emotion_speed * 1.2) if emotion_speed else None
                 else:
-                    self.voice_system.speak(text)
+                    speed = emotion_speed
+
+                # Use emotional variations
+                self.voice_system.speak(text, speed=speed, pitch=emotion_pitch)
+                # Lip sync happens automatically via audio monitoring
             except Exception as e:
                 if DEBUG_AI:
                     print(f"⚠️ TTS error: {e}")
-        
+
         # Start speaking in background thread
         thread = threading.Thread(target=speak_worker, daemon=True)
         thread.start()
@@ -668,6 +746,69 @@ class EmbodiedAI:
                 print(f"Motor update error: {e}")
     
     
+    def _detect_face_movement(self, frame):
+        """Detect face and check if it moved significantly"""
+        try:
+            # Use OpenCV's Haar Cascade for face detection (built-in, fast)
+            face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            faces = face_cascade.detectMultiScale(gray, 1.1, 4)
+
+            if len(faces) > 0:
+                # Get first face position (x, y, w, h)
+                x, y, w, h = faces[0]
+                face_center = (x + w//2, y + h//2)
+
+                # Check if face moved significantly
+                if self.last_face_position:
+                    dx = abs(face_center[0] - self.last_face_position[0])
+                    dy = abs(face_center[1] - self.last_face_position[1])
+                    movement = (dx + dy) / 2
+
+                    # Consider movement significant if > 30 pixels
+                    if movement > 30:
+                        self.face_movement_detected = True
+                        self.last_face_position = face_center
+                        return True
+
+                self.last_face_position = face_center
+                return False
+            else:
+                # No face detected
+                self.last_face_position = None
+                return False
+        except:
+            return False
+
+    def _calculate_dynamic_interval(self):
+        """Calculate AI process interval based on scene activity"""
+        # Get static duration from personality if available
+        static_duration = 0
+        if self.personality and hasattr(self.personality, 'focus_engine'):
+            static_duration = self.personality.focus_engine.static_duration
+
+        # Dynamic interval based on activity
+        if self.face_movement_detected:
+            # Face moving - high activity, faster updates
+            interval = 5.0
+        elif static_duration < 15:
+            # Recent change - normal pace
+            interval = AI_PROCESS_INTERVAL
+        elif static_duration < 30:
+            # Getting static - slow down slightly
+            interval = AI_PROCESS_INTERVAL * 1.3
+        elif static_duration < 60:
+            # Static scene - slow down more
+            interval = AI_PROCESS_INTERVAL * 1.8
+        else:
+            # Very static - very slow
+            interval = AI_PROCESS_INTERVAL * 2.5
+
+        # Reset face movement flag
+        self.face_movement_detected = False
+
+        return interval
+
     def _print_status(self, current_time):
         """Print system status"""
         try:
@@ -702,6 +843,10 @@ class EmbodiedAI:
             if self.thermal_printer:
                 self.thermal_printer.stop()
                 print("🖨️ Thermal printer stopped")
+
+            if self.lipsync:
+                self.lipsync.stop()
+                print("👄 Lip sync stopped")
 
             if self.voice_system:
                 self.voice_system.stop()

@@ -29,11 +29,23 @@ OLLAMA_URL = "http://localhost:11434"
 # OLLAMA_MODEL = "moondream:latest"  # 1.7GB vision - tiny but capable
 # SUBCONSCIOUS_MODEL = "smollm2:1.7b"  # 1.8GB language - very fast
 
-# Option 5: MOONDREAM + NATSUMURA (light vision, keep character) - 6.6GB total ⭐ ACTIVE (6GB VRAM)
-OLLAMA_MODEL = "moondream:latest"  # 1.7GB vision
-SUBCONSCIOUS_MODEL = "Tohur/natsumura-storytelling-rp-llama-3.1:8b"  # 4.9GB language
+# Option 5: MOONDREAM + NATSUMURA (light vision, keep character) - 6.6GB total
+# OLLAMA_MODEL = "moondream:latest"  # 1.7GB vision
+# SUBCONSCIOUS_MODEL = "Tohur/natsumura-storytelling-rp-llama-3.1:8b"  # 4.9GB language
 
-AI_PROCESS_INTERVAL = 5.0  # seconds between AI processing - faster, more reactive
+# Option 6: MOONDREAM + MISTRAL (light vision, better instruction following) - 6.1GB total
+# OLLAMA_MODEL = "moondream:latest"  # 1.7GB vision - fast
+# SUBCONSCIOUS_MODEL = "mistral:latest"  # 4.4GB language - better at following first-person instructions
+
+# Option 7: MOONDREAM + LLAMA3.2 (balanced - fast with good instruction following) - 3.7GB total
+# OLLAMA_MODEL = "moondream:latest"  # 1.7GB vision - fast
+# SUBCONSCIOUS_MODEL = "llama3.2:3b"  # 2.0GB language - NOT DOWNLOADED YET
+
+# Option 4: ULTRA LIGHT (fastest) - 3.5GB total ⭐ ACTIVE (for now)
+OLLAMA_MODEL = "moondream:latest"  # 1.7GB vision
+SUBCONSCIOUS_MODEL = "smollm2:1.7b"  # 1.8GB language - very fast
+
+AI_PROCESS_INTERVAL = 8.0  # seconds between AI processing - slower for stability
 USE_SOPHISTICATED_PROMPTS = False  # Testing hybrid focus-aware legacy system
 OLLAMA_TIMEOUT = 120  # seconds - increase for complex prompts
 
@@ -63,7 +75,7 @@ VOICE_ENABLED = True  # Set to True to enable voice output
 VOICE_ENGINE = "espeak"  # "espeak" (lo-fi, whisper), "windows" (robotic), or "piper" (natural)
 
 # eSpeak TTS Settings (if VOICE_ENGINE = "espeak")
-ESPEAK_VOICE = "en-us+whisper"  # Voice with variants: en-us+whisper, en+f3+whisper, en+croak, etc.
+ESPEAK_VOICE = "en-us+whisper"  # Voice with variants: en-us+whisper, en-gb+whisper, en+f3+whisper, etc.
 ESPEAK_SPEED = 150  # Words per minute: 80-450 (faster = more natural whisper)
 ESPEAK_PITCH = 50  # Pitch: 0-99 (neutral pitch sounds less demonic)
 
@@ -78,6 +90,11 @@ WINDOWS_TTS_GENDER = "female"  # "male" or "female" (David or Zira)
 # Common Voice Settings
 VOICE_ALL_THOUGHTS = True  # Speak every thought (can be overwhelming!)
 VOICE_INTERVAL = 30  # Speak every N seconds (if not speaking all thoughts)
+
+# Lip Sync Settings (servo jaw control)
+LIPSYNC_ENABLED = True  # Enable servo jaw lip sync
+LIPSYNC_PORT = "COM3"  # Arduino serial port
+LIPSYNC_BAUD = 9600  # Serial baud rate
 
 # Camera Preview Settings  
 SHOW_CAMERA_PREVIEW = True
