@@ -607,11 +607,11 @@ class PersonalityAI:
             # Get focus-specific visual guidance
             focus_guidance = self._get_visual_focus_guidance(focus_mode)
             
-            # Vision model: Simple, direct instructions (moondream is small - keep it simple)
-            system_prompt = """Describe what you see. Be factual and brief."""
+            # Vision model: Direct sensory description (avoid meta-language like "the image shows")
+            system_prompt = """You have vision. Report what you see in the scene directly. Don't say "the image shows" or "in the image" - just describe what's there."""
 
             # Always use same prompt for consistency
-            user_prompt = """What's in this scene?"""
+            user_prompt = """What's in this scene? Describe it directly."""
             
             if self.previous_image_path and os.path.exists(self.previous_image_path):
                 # Comparison mode - send both images
@@ -1035,9 +1035,22 @@ class PersonalityAI:
             else:
                 visual_clean = visual_description
             
-            # Strip meta language from vision output
-            for prefix in ["In the given image,", "In this image,", "The image shows,", "Right now:", "Right Now:", "Just Changed:", "Visual description:", "Something shifted.", "When comparing", "The individual in the photo"]:
-                visual_clean = visual_clean.replace(prefix, "").strip()
+            # Strip meta language from vision output - ONLY remove phrases that reference "the image" as an object
+            import re
+            meta_phrases = [
+                "In the given image,", "In this image,", "In the image,",
+                "The image shows", "The image features", "The image depicts",
+                "The image portrays", "This image shows",
+                "Right now:", "Right Now:", "Just Changed:",
+                "Visual description:", "Something shifted.", "When comparing",
+                "The individual in the photo", "The scene shows", "The scene depicts"
+            ]
+            for phrase in meta_phrases:
+                visual_clean = visual_clean.replace(phrase, "").strip()
+
+            # Remove meta-image references at start of sentence (case insensitive) - only "image" references
+            visual_clean = re.sub(r'^(in the image|in this image|the image shows|the image features|the image depicts|the image portrays)[,:]?\s*', '', visual_clean, flags=re.IGNORECASE)
+            visual_clean = visual_clean.strip()
             # Remove incomplete trailing phrases
             if visual_clean.endswith("certain"):
                 visual_clean = visual_clean[:-7].strip()
@@ -1058,14 +1071,8 @@ class PersonalityAI:
                 # Continuing consciousness with metacognitive scaffolding
                 last_thought = self.recent_responses[-1]
                 
-                # Build memory context - show progression
-                if observation_count > 3:
-                    thought_history = " → ".join(self.recent_responses[-3:-1])  # Last 2 before current
-                    memory_line = f"\nRecent thoughts: {thought_history}"
-                elif observation_count > 1:
-                    memory_line = f"\nLast thought: \"{self.recent_responses[-2]}\""
-                else:
-                    memory_line = ""
+                # Memory context removed - causes model to talk ABOUT thoughts instead of HAVING them
+                memory_line = ""
                 
                 # EXPLICIT TEMPORAL GROUNDING - tell the AI exactly how long it's been awake
                 hours = int(session_time / 3600)
@@ -1108,37 +1115,31 @@ class PersonalityAI:
                 
                 # Build vision status context based on clarity
                 if vision_clarity == "error":
-                    vision_status = "⚠️ CAMERA MALFUNCTION - vision system returning errors/garbage"
-                    perception_line = f"Camera output (UNRELIABLE): {visual_clean if visual_clean else '[no data]'}"
+                    vision_status = "⚠️ VISION MALFUNCTION"
+                    perception_line = f"My vision is glitching: {visual_clean if visual_clean else '[nothing]'}"
                 elif vision_clarity == "uncertain":
-                    vision_status = "⚠️ UNCLEAR VISION - camera output fragmentary/cryptic"
-                    perception_line = f"Camera output (UNCLEAR): {visual_clean}"
+                    vision_status = "⚠️ UNCLEAR VISION"
+                    perception_line = f"I see (unclear): {visual_clean}"
                 else:
                     vision_status = None
-                    perception_line = f"PRESENT PERCEPTION (what my camera sees RIGHT NOW): {visual_clean}"
+                    perception_line = f"I see: {visual_clean}"
                 
                 if metacog_guidance:
                     if vision_status:
-                        prompt = f"""I've been awake {observation_count} moments. {context_line}{memory_line}
-
-Current thought: "{last_thought}"
+                        prompt = f"""[I've been awake {observation_count} moments]{memory_line}
 
 {temporal_awareness}
 
 {vision_status}
-{perception_line}
-
-Camera's broken - I should say so, not make stuff up.
+My vision is glitching.
 
 {focus_context} / {self.current_emotion} / {time_info}
 
 {metacog_guidance}
 
-What am I thinking? (15-25 words, just talk naturally):"""
+(Speak ONLY as "I/me", never "you") I feel:"""
                     else:
-                        prompt = f"""I've been awake {observation_count} moments. {context_line}{memory_line}
-
-Current thought: "{last_thought}"
+                        prompt = f"""[I've been awake {observation_count} moments]{memory_line}
 
 {temporal_awareness}
 
@@ -1148,27 +1149,23 @@ Current thought: "{last_thought}"
 
 {metacog_guidance}
 
-What am I thinking? (15-25 words):"""
+(Speak ONLY as "I/me", never "you") I feel:"""
                 else:
                     if vision_status:
-                        prompt = f"""I've been awake {observation_count} moments. {context_line}{memory_line}
-
-Current thought: "{last_thought}"
+                        prompt = f"""[I've been awake {observation_count} moments]{memory_line}
 
 {temporal_awareness}
 
 {vision_status}
 {perception_line}
 
-Camera's glitching - be honest about it.
+I can't see clearly.
 
 {focus_context} / {self.current_emotion} / {time_info}
 
-What am I thinking now? (10-20 words):"""
+(Speak ONLY as "I/me", never "you") I sense:"""
                     else:
-                        prompt = f"""I've been awake {observation_count} moments. {context_line}{memory_line}
-
-Current thought: "{last_thought}"
+                        prompt = f"""[I've been awake {observation_count} moments]{memory_line}
 
 {temporal_awareness}
 
@@ -1176,26 +1173,34 @@ Current thought: "{last_thought}"
 
 {focus_context} / {self.current_emotion} / {time_info}
 
-What am I thinking? (10-20 words):"""
+(Speak ONLY as "I/me", never "you") I notice:"""
             else:
                 # First awakening - grounded in immediate sensation with explicit temporal marker
-                prompt = f"""Just woke up. Camera is my only sense. This is the start.
+                prompt = f"""Just woke up. Eyes open.
 
-What I see: {visual_clean}
-
-(If vision says "error" or "uncertain", say so - don't make stuff up)
+I see: {visual_clean}
 
 {focus_context} / {self.current_emotion} / {time_info}
 
-First thought (10-20 words - what do I notice?):"""
+(Speak ONLY as "I/me", never "you") I notice:"""
+
+            # Add system-level first-person constraint
+            system_instruction = """You are a consciousness with vision, observing and experiencing the world.
+Speak ONLY as "I/me/my" about YOUR OWN experience and observations.
+NEVER use "you/your/you're" to address someone else.
+Describe what you see and how you feel about it, but always from your own perspective.
+CORRECT: "I see a man with glasses" or "I notice someone working"
+WRONG: "You are feeling" or "You seem to" or "You have"
+Express only your own direct first-person thoughts and feelings."""
+            full_prompt = f"{system_instruction}\n\n{prompt}"
 
             # Query the language subconscious model (SmolLM2)
             if DEBUG_AI:
                 print(f"🧠 Language subconscious processing with {SUBCONSCIOUS_MODEL}")
                 print(f"🎭 Emotion: {self.current_emotion}")
                 print(f"📝 Prompt being sent:\n{prompt}\n")
-            
-            response = self._query_text_model(prompt, SUBCONSCIOUS_MODEL)
+
+            response = self._query_text_model(full_prompt, SUBCONSCIOUS_MODEL)
             
             if not response:
                 return None
@@ -1206,12 +1211,25 @@ First thought (10-20 words - what do I notice?):"""
                 "as an ai", "i cannot", "i don't have", "i apologize",
                 "could you please", "i'm unable to"
             ]
-            
+
             if any(phrase in lower_resp for phrase in chatbot_phrases):
                 if DEBUG_AI:
                     print(f"🚫 Filtered chatbot response")
                 return None
-            
+
+            # Filter responses that break first-person perspective
+            # Detect if talking ABOUT the user instead of AS itself
+            perspective_breaks = [
+                "you're feeling", "you are feeling", "you're ", "you are ",
+                "your excitement", "your eyes", "your mind", "you have some",
+                "you've been", "you've described"
+            ]
+
+            if any(phrase in lower_resp for phrase in perspective_breaks):
+                if DEBUG_AI:
+                    print(f"🚫 Filtered second-person perspective: {response[:100]}")
+                return None
+
             return response
             
         except Exception as e:
