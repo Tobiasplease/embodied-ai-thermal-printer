@@ -32,7 +32,8 @@ from config import (
     VOICE_ENABLED, VOICE_ENGINE, VOICE_MODEL, VOICE_ALL_THOUGHTS, VOICE_INTERVAL,
     WINDOWS_TTS_RATE, WINDOWS_TTS_VOLUME, WINDOWS_TTS_GENDER,
     ESPEAK_VOICE, ESPEAK_SPEED, ESPEAK_PITCH,
-    LIPSYNC_ENABLED, LIPSYNC_PORT, LIPSYNC_BAUD
+    LIPSYNC_ENABLED, LIPSYNC_PORT, LIPSYNC_BAUD,
+    SUBTITLE_PROJECTOR_ENABLED, SUBTITLE_PROJECTOR_FONT_SIZE, SUBTITLE_PROJECTOR_COLOR
 )
 
 # Import lip sync FIRST (optional) - direct audio version
@@ -63,6 +64,16 @@ if VOICE_ENABLED:
     except ImportError as e:
         print(f"⚠️ Voice system not available: {e}")
         VOICE_AVAILABLE = False
+
+# Import subtitle projector (optional)
+PROJECTOR_AVAILABLE = False
+if SUBTITLE_PROJECTOR_ENABLED:
+    try:
+        from subtitle_projector import SubtitleProjectorClient
+        PROJECTOR_AVAILABLE = True
+    except ImportError as e:
+        print(f"⚠️ Subtitle projector not available: {e}")
+        PROJECTOR_AVAILABLE = False
 
 def clear_print_queue_preemptive():
     """Clear Windows print queue aggressively with admin elevation"""
@@ -131,6 +142,7 @@ class EmbodiedAI:
         self.thermal_printer = None
         self.voice_system = None
         self.lipsync = None
+        self.subtitle_projector = None
         
         # Timing controls - avoid threading issues
         self.last_ai_process_time = 0
@@ -151,13 +163,15 @@ class EmbodiedAI:
         # Live captioning subtitle system (thread-safe)
         self.current_subtitle = ""
         self.subtitle_chunks = []
+        self.chunk_ready_flags = []  # Track when each chunk's jaw has moved
         self.current_chunk_index = 0
         self.subtitle_start_time = 0
         self.chunk_display_duration = 0  # Dynamic duration per chunk
         self.last_chunk_change_time = 0
         self.subtitle_lock = threading.Lock()
         self.caption_version = 0  # Track caption changes to prevent old chunks from speaking
-        
+        self.pending_caption = None  # Queue next caption to start after current chunk finishes
+
         # Silence period tracking
         self.in_silence_period = False
         self.silence_start_time = 0
@@ -287,12 +301,27 @@ class EmbodiedAI:
                 else:
                     print("🔇 Voice system disabled (config)")
 
+            # Initialize subtitle projector (optional)
+            if SUBTITLE_PROJECTOR_ENABLED and PROJECTOR_AVAILABLE:
+                print("📽️ Initializing subtitle projector...")
+                try:
+                    self.subtitle_projector = SubtitleProjectorClient()
+                    print("✅ Subtitle projector ready (fullscreen)")
+                except Exception as e:
+                    print(f"⚠️ Subtitle projector disabled: {e}")
+                    self.subtitle_projector = None
+            else:
+                if SUBTITLE_PROJECTOR_ENABLED:
+                    print("📽️ Subtitle projector disabled (not available)")
+                else:
+                    print("📽️ Subtitle projector disabled (config)")
+
             # Initialize hand control
             if DEBUG_MOTOR:
                 print("🤖 Initializing hand control...")
             self.hand_control = HandControlInterface()            # Launch hand control process (optional)
             # self.hand_control.launch_hand_controller(headless=True)
-            
+
             print("✅ All components initialized successfully")
             return True
             
@@ -453,10 +482,16 @@ class EmbodiedAI:
                 # Thread-safe live captioning subtitle update
                 with self.subtitle_lock:
                     self.current_subtitle = clean_caption
-                    
+
+                    # NOTE: Don't send to projector here - it will be updated per chunk
+                    # This ensures projector shows chunks in sync with camera preview
+
                     # Create sentence-based chunks (like live captioning)
                     self.subtitle_chunks = self._create_smart_chunks(clean_caption)
-                    
+
+                    # Initialize ready flags - all False (waiting for jaw movement)
+                    self.chunk_ready_flags = [False] * len(self.subtitle_chunks)
+
                     # Reset to first chunk
                     self.current_chunk_index = 0
                     self.subtitle_start_time = time.time()
@@ -474,16 +509,52 @@ class EmbodiedAI:
                         word_count = len(first_chunk.split())
                         total_words = len(clean_caption.split())
                         self.chunk_display_duration = self._calculate_tts_duration(word_count)
-                        
-                        # Speak first chunk immediately if voice enabled (non-blocking)
+
+                        # Speak first chunk with callback to mark it ready when jaw moves
                         if self.voice_system and VOICE_ALL_THOUGHTS:
                             if DEBUG_AI:
                                 print(f"🎙️ Speaking chunk 0/{len(self.subtitle_chunks)-1}: {first_chunk[:50]}...")
-                            self._speak_async(first_chunk, total_caption_words=total_words)
-                
-                # Show output with timestamp (clean, simple)
+
+                            # Capture version AND chunk text for closure
+                            chunk_0_version = self.caption_version
+                            chunk_0_text = first_chunk
+
+                            # Callback to mark chunk 0 as ready when jaw moves
+                            def on_jaw_movement_chunk_0():
+                                if self.caption_version != chunk_0_version:
+                                    return  # Old caption - ignore
+                                print(f"📢 Chunk 0 jaw moved - marking ready!")
+                                with self.subtitle_lock:
+                                    if len(self.chunk_ready_flags) > 0:
+                                        self.chunk_ready_flags[0] = True
+                                        # Reset timer NOW (when jaw actually moves)
+                                        self.last_chunk_change_time = time.time()
+
+                                        # Update projector with EXACT text we're speaking
+                                        if self.subtitle_projector:
+                                            try:
+                                                self.subtitle_projector.display(chunk_0_text)
+                                                if DEBUG_AI:
+                                                    print(f"📽️ Projector: '{chunk_0_text[:50]}...'")
+                                            except Exception as e:
+                                                if DEBUG_AI:
+                                                    print(f"⚠️ Projector update error: {e}")
+
+                            # Callback when chunk 0 finishes - speak chunk 1
+                            def on_chunk_0_finished():
+                                if self.caption_version != chunk_0_version:
+                                    return  # Old caption - ignore
+                                print(f"\n✅ Chunk 0 finished!")
+                                self._speak_next_chunk(0, chunk_0_version)
+
+                            self._speak_async(first_chunk, total_caption_words=total_words,
+                                            on_start_callback=on_jaw_movement_chunk_0,
+                                            on_end_callback=on_chunk_0_finished)
+
+                # Show FIRST CHUNK with timestamp - other chunks will print as they speak
                 timestamp_str = time.strftime("%H:%M:%S")
-                print(f"\n[{timestamp_str}] 💭 {clean_caption}\n")
+                if self.subtitle_chunks:
+                    print(f"\n[{timestamp_str}] 💭 {self.subtitle_chunks[0]}", end="", flush=True)
 
                 # Send to thermal printer for rhythmic printing
                 if self.thermal_printer:
@@ -527,7 +598,67 @@ class EmbodiedAI:
         params = emotion_params.get(emotion, {'speed': 150, 'pitch': 50})
         return params['speed'], params['pitch']
 
-    def _speak_async(self, text, total_caption_words=None, caption_version=None):
+    def _speak_next_chunk(self, just_finished_idx, expected_version):
+        """Speak the next chunk after the current one finishes"""
+        # Check version FIRST before acquiring lock
+        if self.caption_version != expected_version:
+            return  # Old caption - abort
+
+        with self.subtitle_lock:
+            # Double-check version inside lock
+            if self.caption_version != expected_version:
+                return  # Old caption - abort
+
+            # Advance to next chunk
+            next_idx = just_finished_idx + 1
+            if next_idx >= len(self.subtitle_chunks):
+                return  # No more chunks
+
+            self.current_chunk_index = next_idx
+            print(f"⏭️  Advanced to chunk {next_idx}")
+
+            chunk = self.subtitle_chunks[next_idx]
+            current_ver = self.caption_version
+
+        # Print chunk to console
+        print(f" {chunk}", end="", flush=True)
+
+        # Capture the actual chunk text for the callback (not just the index!)
+        chunk_text_for_callback = chunk
+
+        # Callbacks for this chunk
+        def on_jaw_movement():
+            if self.caption_version != expected_version:
+                return  # Old caption - ignore
+            print(f"\n📢 Chunk {next_idx} jaw moved - marking ready!")
+            with self.subtitle_lock:
+                if next_idx < len(self.chunk_ready_flags):
+                    self.chunk_ready_flags[next_idx] = True
+                    self.last_chunk_change_time = time.time()
+
+                    # Update projector with the EXACT text we're speaking
+                    if self.subtitle_projector:
+                        try:
+                            self.subtitle_projector.display(chunk_text_for_callback)
+                            if DEBUG_AI:
+                                print(f"📽️ Projector: '{chunk_text_for_callback[:50]}...'")
+                        except Exception as e:
+                            if DEBUG_AI:
+                                print(f"⚠️ Projector update error: {e}")
+
+        def on_finished():
+            if self.caption_version != expected_version:
+                return  # Old caption - ignore
+            print(f"\n✅ Chunk {next_idx} finished!")
+            self._speak_next_chunk(next_idx, expected_version)  # Recursive chain!
+
+        # Speak it
+        if self.voice_system and VOICE_ALL_THOUGHTS:
+            self._speak_async(chunk, caption_version=current_ver,
+                            on_start_callback=on_jaw_movement,
+                            on_end_callback=on_finished)
+
+    def _speak_async(self, text, total_caption_words=None, caption_version=None, on_start_callback=None, on_end_callback=None):
         """Speak text with emotional variation in a separate thread"""
         if not self.voice_system or not text:
             return
@@ -548,8 +679,8 @@ class EmbodiedAI:
                 else:
                     speed = emotion_speed
 
-                # Use emotional variations
-                self.voice_system.speak(text, speed=speed, pitch=emotion_pitch)
+                # Use emotional variations with callbacks
+                self.voice_system.speak(text, speed=speed, pitch=emotion_pitch, on_start_callback=on_start_callback, on_end_callback=on_end_callback)
                 # Lip sync happens automatically via audio monitoring
             except Exception as e:
                 if DEBUG_AI:
@@ -629,9 +760,19 @@ class EmbodiedAI:
             # Hide chunk after 6 seconds maximum (longer for reading)
             if chunk_display_time >= 6.0:
                 if not self.in_silence_period:
-                    # Just entered silence period
+                    # Just entered silence period - end the caption line
+                    print()  # Newline to complete the caption
                     self.in_silence_period = True
                     self.silence_start_time = current_time
+
+                    # Clear projector subtitle when entering silence
+                    if self.subtitle_projector:
+                        try:
+                            self.subtitle_projector.clear()
+                        except Exception as e:
+                            if DEBUG_AI:
+                                print(f"⚠️ Projector clear error: {e}")
+
                     if DEBUG_CAMERA:
                         print(f"🔇 Entering silence period...")
                 elif DEBUG_CAMERA:
@@ -641,39 +782,25 @@ class EmbodiedAI:
                     print(f"\r🔇 Silence: {silence_duration:.1f}s", end="", flush=True)
                 return frame  # Show blank space - silence is important
             
-            # Check if it's time to advance to next chunk
-            if (chunk_display_time >= self.chunk_display_duration and 
-                self.current_chunk_index < len(self.subtitle_chunks) - 1):
-                
-                # Advance to next chunk
-                self.current_chunk_index += 1
-                self.last_chunk_change_time = current_time
-                
-                # Reset silence period when new content appears
-                if self.in_silence_period:
-                    self.in_silence_period = False
-                    if DEBUG_CAMERA:
-                        print()  # New line after silence timer
-                
-                # Calculate duration for new chunk (based on TTS)
-                if self.current_chunk_index < len(self.subtitle_chunks):
-                    chunk = self.subtitle_chunks[self.current_chunk_index]
-                    word_count = len(chunk.split())
-                    current_version = self.caption_version  # Capture current version
-                    self.chunk_display_duration = self._calculate_tts_duration(word_count)
-                    
-                    # Speak this chunk if voice enabled (non-blocking)
-                    if self.voice_system and VOICE_ALL_THOUGHTS:
-                        if DEBUG_AI:
-                            print(f"🎙️ Speaking chunk {self.current_chunk_index}/{len(self.subtitle_chunks)-1}: {chunk[:50]}...")
-                        self._speak_async(chunk, caption_version=current_version)
-                    
-                    if DEBUG_CAMERA:
-                        print(f"🎬 Next chunk: {word_count} words, {self.chunk_display_duration:.1f}s -> {chunk}")
+            # Chunks now advance automatically when audio finishes (via on_chunk_finished callback)
+            # No time-based advancement needed!
             
-            # Get current chunk to display (only if within 4-second window)
-            current_chunk = self.subtitle_chunks[self.current_chunk_index]
-        
+            # Get current chunk to display (only if jaw has moved for this chunk)
+            if (self.current_chunk_index < len(self.chunk_ready_flags) and
+                self.chunk_ready_flags[self.current_chunk_index]):
+                current_chunk = self.subtitle_chunks[self.current_chunk_index]
+
+                # NOTE: Projector is updated in jaw_movement callback, not here
+                # This ensures immediate updates without waiting for display loop
+
+                if DEBUG_CAMERA:
+                    print(f"✅ Chunk {self.current_chunk_index} ready - displaying: {current_chunk[:50]}")
+            else:
+                # Chunk not ready yet - jaw hasn't moved
+                if DEBUG_CAMERA and self.current_chunk_index < len(self.chunk_ready_flags):
+                    print(f"⏳ Chunk {self.current_chunk_index} not ready yet (flag={self.chunk_ready_flags[self.current_chunk_index]})")
+                return frame
+
         # Draw subtitle overlay (legacy-style: smaller, fitted background)
         lines = textwrap.wrap(current_chunk, width=65)  # Slightly more characters for better flow
         if not lines:
@@ -781,28 +908,30 @@ class EmbodiedAI:
             return False
 
     def _calculate_dynamic_interval(self):
-        """Calculate AI process interval based on scene activity"""
-        # Get static duration from personality if available
-        static_duration = 0
-        if self.personality and hasattr(self.personality, 'focus_engine'):
-            static_duration = self.personality.focus_engine.static_duration
+        """Calculate AI process interval based on activity detection"""
+        # Use activity detector's suggested delay if available
+        if self.personality and hasattr(self.personality, 'suggested_check_delay'):
+            interval = self.personality.suggested_check_delay
 
-        # Dynamic interval based on activity
-        if self.face_movement_detected:
-            # Face moving - high activity, faster updates
-            interval = 5.0
-        elif static_duration < 15:
-            # Recent change - normal pace
-            interval = AI_PROCESS_INTERVAL
-        elif static_duration < 30:
-            # Getting static - slow down slightly
-            interval = AI_PROCESS_INTERVAL * 1.3
-        elif static_duration < 60:
-            # Static scene - slow down more
-            interval = AI_PROCESS_INTERVAL * 1.8
+            # Override with faster response if face movement detected
+            if self.face_movement_detected:
+                interval = min(interval, 2.0)  # Cap at 2 seconds when face moving
         else:
-            # Very static - very slow
-            interval = AI_PROCESS_INTERVAL * 2.5
+            # Fallback to old system if activity detector not available
+            static_duration = 0
+            if self.personality and hasattr(self.personality, 'focus_engine'):
+                static_duration = self.personality.focus_engine.static_duration
+
+            if self.face_movement_detected:
+                interval = 5.0
+            elif static_duration < 15:
+                interval = AI_PROCESS_INTERVAL
+            elif static_duration < 30:
+                interval = AI_PROCESS_INTERVAL * 1.3
+            elif static_duration < 60:
+                interval = AI_PROCESS_INTERVAL * 1.8
+            else:
+                interval = AI_PROCESS_INTERVAL * 2.5
 
         # Reset face movement flag
         self.face_movement_detected = False

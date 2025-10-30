@@ -36,13 +36,21 @@ class DirectAudioLipSync:
         self.JAW_CLOSED = 20
         self.JAW_OPEN = 70
 
-        # Audio thresholds (lower = more sensitive)
-        self.SILENCE_THRESHOLD = 50
-        self.MAX_AMPLITUDE = 5000
+        # Audio thresholds (lower = more sensitive, adjusted for better responsiveness)
+        self.SILENCE_THRESHOLD = 20   # Very low = opens on even quiet sounds
+        self.MAX_AMPLITUDE = 3000     # Lower = reaches full open more easily
 
-        # Smoothing (higher = smoother, 0.0-1.0)
+        # Smoothing (higher = smoother, 0.0-1.0) - reduced for faster response
         self.last_angle = self.JAW_CLOSED
-        self.smoothing_factor = 0.75
+        self.smoothing_factor = 0.5  # Reduced from 0.75 for quicker movement
+
+        # Keep-alive for rapid speech (prevents closing too fast)
+        self.last_open_time = 0
+        self.keep_open_duration = 0.05  # Stay open for 50ms after sound
+
+        # Playback timing (for subtitle sync)
+        self.playback_start_time = None
+        self.current_playback_time = 0.0
 
         # PyAudio
         self.audio = pyaudio.PyAudio()
@@ -73,63 +81,114 @@ class DirectAudioLipSync:
             print(f"⚠️ Lip sync error: {e}")
 
     def _amplitude_to_angle(self, amplitude: float) -> int:
-        """Convert amplitude to jaw angle"""
-        if amplitude < self.SILENCE_THRESHOLD:
-            return self.JAW_CLOSED
+        """Convert amplitude to jaw angle with minimum visible movement"""
+        current_time = time.time()
 
-        # Normalize amplitude
-        normalized = (amplitude - self.SILENCE_THRESHOLD) / (self.MAX_AMPLITUDE - self.SILENCE_THRESHOLD)
-        normalized = max(0, min(1, normalized))
+        # Check if we should keep jaw open from recent sound
+        time_since_open = current_time - self.last_open_time
+        keep_alive = time_since_open < self.keep_open_duration
 
-        # Calculate target angle
-        target_angle = self.JAW_CLOSED + (normalized * (self.JAW_OPEN - self.JAW_CLOSED))
+        if amplitude < self.SILENCE_THRESHOLD and not keep_alive:
+            # True silence - close jaw
+            target_angle = self.JAW_CLOSED
+        else:
+            # Sound detected OR keep-alive active
+            if amplitude >= self.SILENCE_THRESHOLD:
+                self.last_open_time = current_time
 
-        # Smooth movement
-        smoothed = (self.smoothing_factor * target_angle) + ((1 - self.smoothing_factor) * self.last_angle)
+            # Normalize amplitude
+            normalized = (amplitude - self.SILENCE_THRESHOLD) / (self.MAX_AMPLITUDE - self.SILENCE_THRESHOLD)
+            normalized = max(0, min(1, normalized))
+
+            # FULL OPENING: Always open fully when sound detected
+            # With fast movement and consistent whisper volume, go all the way
+            if normalized > 0.1:  # If any real sound detected
+                normalized = 1.0  # Always fully open for maximum visibility
+
+            # Keep-alive maintains high opening between syllables
+            if keep_alive and normalized < 0.8:
+                normalized = 0.8  # Stay mostly open during speech
+
+            # Calculate target angle
+            target_angle = self.JAW_CLOSED + (normalized * (self.JAW_OPEN - self.JAW_CLOSED))
+
+        # Simplified smoothing - balanced for clear syllables
+        if target_angle > self.last_angle:
+            # Opening: moderate smoothing for clear but smooth opening
+            dynamic_smoothing = self.smoothing_factor * 0.5
+        else:
+            # Closing: more smoothing to avoid jitter
+            dynamic_smoothing = self.smoothing_factor * 1.0
+
+        smoothed = (dynamic_smoothing * target_angle) + ((1 - dynamic_smoothing) * self.last_angle)
         self.last_angle = smoothed
 
         return int(smoothed)
 
-    def play_with_lipsync(self, wav_path: str):
+    def play_with_lipsync(self, wav_path: str, on_start_callback=None, on_end_callback=None):
         """
         Play WAV file and sync jaw to audio waveform
 
         Args:
             wav_path: Path to WAV file to play
+            on_start_callback: Called when jaw actually starts moving (audio playing)
+            on_end_callback: Called when audio playback finishes
         """
         if not self.enabled or not Path(wav_path).exists():
             return
 
         self.is_playing = True
         self.should_stop = False
+        self.playback_start_time = time.time()
+        self.current_playback_time = 0.0
 
         try:
             # Open WAV file
             wf = wave.open(wav_path, 'rb')
+            framerate = wf.getframerate()
 
             # Open audio stream
             stream = self.audio.open(
                 format=self.audio.get_format_from_width(wf.getsampwidth()),
                 channels=wf.getnchannels(),
-                rate=wf.getframerate(),
+                rate=framerate,
                 output=True
             )
 
             # Read and play audio in chunks while analyzing
             chunk_size = 1024
             data = wf.readframes(chunk_size)
+            frames_played = 0
+            callback_fired = False
 
             while data and not self.should_stop:
                 # Play audio
                 stream.write(data)
 
+                # Update playback time based on frames played
+                frames_played += len(data) // wf.getsampwidth() // wf.getnchannels()
+                self.current_playback_time = frames_played / framerate
+
                 # Analyze amplitude
                 audio_array = np.frombuffer(data, dtype=np.int16)
-                amplitude = np.sqrt(np.mean(audio_array**2))
+                if len(audio_array) > 0:
+                    amplitude = np.sqrt(np.mean(np.abs(audio_array)**2))
+                else:
+                    amplitude = 0
 
                 # Move jaw
                 jaw_angle = self._amplitude_to_angle(amplitude)
                 self._send_command(jaw_angle)
+
+                # Fire callback when jaw ACTUALLY moves (opens from closed)
+                # This is when sound is truly playing - the servo is responding!
+                if not callback_fired and jaw_angle > self.JAW_CLOSED + 5 and on_start_callback:
+                    print(f"🎤 JAW MOVED! Angle: {jaw_angle} (threshold: {self.JAW_CLOSED + 5})")
+                    try:
+                        on_start_callback()
+                    except Exception as e:
+                        print(f"Callback error: {e}")
+                    callback_fired = True
 
                 # Read next chunk
                 data = wf.readframes(chunk_size)
@@ -138,6 +197,13 @@ class DirectAudioLipSync:
             stream.stop_stream()
             stream.close()
             wf.close()
+
+            # Fire end callback after audio finishes
+            if on_end_callback:
+                try:
+                    on_end_callback()
+                except Exception as e:
+                    print(f"End callback error: {e}")
 
         except Exception as e:
             print(f"⚠️ Audio playback error: {e}")

@@ -3,8 +3,8 @@
 
 # Camera Settings
 CAMERA_INDEX = 0  # 0 = built-in laptop camera, 1 = external USB webcam
-CAMERA_WIDTH = 640  # Back to higher resolution for better AI vision
-CAMERA_HEIGHT = 480
+CAMERA_WIDTH = 1280  # Higher resolution for better AI vision
+CAMERA_HEIGHT = 720
 CAMERA_FPS = 30
 
 # AI Settings
@@ -41,9 +41,13 @@ OLLAMA_URL = "http://localhost:11434"
 # OLLAMA_MODEL = "moondream:latest"  # 1.7GB vision - fast
 # SUBCONSCIOUS_MODEL = "llama3.2:3b"  # 2.0GB language - NOT DOWNLOADED YET
 
-# Option 4: ULTRA LIGHT (fastest) - 3.5GB total ⭐ ACTIVE (for now)
-OLLAMA_MODEL = "moondream:latest"  # 1.7GB vision
+# Option 4: ULTRA LIGHT (fastest) - 3.5GB total ⭐ ACTIVE
+OLLAMA_MODEL = "moondream:latest"  # 1.7GB vision - fast, occasional glitches
 SUBCONSCIOUS_MODEL = "smollm2:1.7b"  # 1.8GB language - very fast
+
+# Option 8: MINICPM-V + SMOLLM2 (better vision, fast language) - 7.3GB total (too slow)
+# OLLAMA_MODEL = "minicpm-v:8b"  # 5.5GB vision - more stable than moondream
+# SUBCONSCIOUS_MODEL = "smollm2:1.7b"  # 1.8GB language - very fast
 
 AI_PROCESS_INTERVAL = 8.0  # seconds between AI processing - slower for stability
 USE_SOPHISTICATED_PROMPTS = False  # Testing hybrid focus-aware legacy system
@@ -75,9 +79,10 @@ VOICE_ENABLED = True  # Set to True to enable voice output
 VOICE_ENGINE = "espeak"  # "espeak" (lo-fi, whisper), "windows" (robotic), or "piper" (natural)
 
 # eSpeak TTS Settings (if VOICE_ENGINE = "espeak")
-ESPEAK_VOICE = "en-us+whisper"  # Voice with variants: en-us+whisper, en-gb+whisper, en+f3+whisper, etc.
+ESPEAK_VOICE = "en+whisperf"  # Voice variants: en+whisper (male), en+whisperf (female), en+f3, etc.
+# NOTE: Can't stack variants like en+f3+whisper - only 2 components allowed
 ESPEAK_SPEED = 150  # Words per minute: 80-450 (faster = more natural whisper)
-ESPEAK_PITCH = 50  # Pitch: 0-99 (neutral pitch sounds less demonic)
+ESPEAK_PITCH = 70  # Pitch: 0-99 (higher = more feminine/lighter)
 
 # Piper TTS Settings (if VOICE_ENGINE = "piper")
 VOICE_MODEL = "en_US-kristin-medium"  # Voice model: kristin (F), ryan (M), lessac (F)
@@ -96,9 +101,14 @@ LIPSYNC_ENABLED = True  # Enable servo jaw lip sync
 LIPSYNC_PORT = "COM3"  # Arduino serial port
 LIPSYNC_BAUD = 9600  # Serial baud rate
 
-# Camera Preview Settings  
+# Camera Preview Settings
 SHOW_CAMERA_PREVIEW = True
 PREVIEW_WIDTH = 800
 PREVIEW_HEIGHT = 600
 SUBTITLE_DURATION = 8.0  # seconds to show each caption
 MIN_CAPTION_INTERVAL = 5.0  # minimum seconds between captions
+
+# Subtitle Projector Settings
+SUBTITLE_PROJECTOR_ENABLED = True  # Enable fullscreen subtitle projector for installation
+SUBTITLE_PROJECTOR_FONT_SIZE = 48  # Font size for projected subtitles
+SUBTITLE_PROJECTOR_COLOR = "yellow"  # Color of projected subtitles

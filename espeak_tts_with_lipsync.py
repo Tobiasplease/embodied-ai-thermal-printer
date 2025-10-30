@@ -90,15 +90,27 @@ class ESpeakWithLipSync:
             try:
                 item = self.speech_queue.get(timeout=0.5)
                 if item:
-                    text, use_whisper_override, speed_override, pitch_override = item
-                    self._do_speak(text, use_whisper_override, speed_override, pitch_override)
+                    if len(item) == 6:
+                        text, use_whisper_override, speed_override, pitch_override, start_callback, end_callback = item
+                    elif len(item) == 5:
+                        # Backwards compatibility - single callback is start callback
+                        text, use_whisper_override, speed_override, pitch_override, start_callback = item
+                        end_callback = None
+                    else:
+                        # Backwards compatibility
+                        text, use_whisper_override, speed_override, pitch_override = item
+                        start_callback = None
+                        end_callback = None
+                    self._do_speak(text, use_whisper_override, speed_override, pitch_override, start_callback, end_callback)
             except queue.Empty:
                 continue
             except Exception as e:
                 print(f"Speech worker error: {e}")
 
     def _do_speak(self, text: str, use_whisper_override: Optional[bool],
-                   speed_override: Optional[int], pitch_override: Optional[int]):
+                   speed_override: Optional[int], pitch_override: Optional[int],
+                   on_start_callback: Optional[callable] = None,
+                   on_end_callback: Optional[callable] = None):
         """Actually perform speech"""
         if not text or not text.strip():
             return
@@ -141,9 +153,9 @@ class ESpeakWithLipSync:
                 print(f"eSpeak error: {result.stderr}")
                 return
 
-            # Play WAV with lip sync
+            # Play WAV with lip sync - callbacks fire when jaw moves and when audio ends
             if self.lipsync and wav_file.exists():
-                self.lipsync.play_with_lipsync(str(wav_file))
+                self.lipsync.play_with_lipsync(str(wav_file), on_start_callback=on_start_callback, on_end_callback=on_end_callback)
             else:
                 # Fallback: play without lip sync
                 import pyaudio
@@ -174,7 +186,9 @@ class ESpeakWithLipSync:
             self.is_speaking = False
 
     def speak(self, text: str, use_whisper: Optional[bool] = None,
-             speed: Optional[int] = None, pitch: Optional[int] = None):
+             speed: Optional[int] = None, pitch: Optional[int] = None,
+             on_start_callback: Optional[callable] = None,
+             on_end_callback: Optional[callable] = None):
         """
         Queue text for speech
 
@@ -183,11 +197,13 @@ class ESpeakWithLipSync:
             use_whisper: Override whisper setting
             speed: Override speed (WPM)
             pitch: Override pitch (0-99)
+            on_start_callback: Called when jaw actually moves (audio playing)
+            on_end_callback: Called when audio finishes playing
         """
         if not text or not text.strip():
             return
 
-        self.speech_queue.put((text, use_whisper, speed, pitch))
+        self.speech_queue.put((text, use_whisper, speed, pitch, on_start_callback, on_end_callback))
 
     def stop(self):
         """Stop speech system"""

@@ -279,7 +279,11 @@ class PersonalityAI:
         # Memory and consciousness
         self.memory_ref = AdvancedMemory()
         self.memory_ref.session_start = time.time()
+
+        # True session start - when consciousness FIRST awakened (persists across restarts)
+        # This will be overwritten by load_state() if there's a previous session
         self.true_session_start = time.time()
+        self.current_session_start = time.time()  # When THIS program instance started
         
         # Mood system (3D like machine.py)
         self.current_mood = 0.5  
@@ -351,21 +355,50 @@ class PersonalityAI:
         except Exception as e:
             print(f"Warning: Focus system initialization failed: {e}")
             self.focus_system_enabled = False
+
+        # Person Tracking System (YOLO-based for narrative continuity)
+        try:
+            from person_tracker import PersonTracker
+            self.person_tracker = PersonTracker(model_size='n', confidence_threshold=0.5)
+            self.person_tracking_enabled = self.person_tracker.model is not None
+            if self.person_tracking_enabled:
+                print(f"✅ Person tracking enabled (narrative events active)")
+        except Exception as e:
+            print(f"⚠️ Person tracking disabled: {e}")
+            self.person_tracker = None
+            self.person_tracking_enabled = False
+
+        # Activity Detection (optical flow for intelligent response timing)
+        try:
+            from activity_detector import ActivityDetector
+            self.activity_detector = ActivityDetector(history_length=10)
+            self.activity_detection_enabled = True
+            print(f"✅ Activity detection enabled (adaptive response timing)")
+        except Exception as e:
+            print(f"⚠️ Activity detection disabled: {e}")
+            self.activity_detector = None
+            self.activity_detection_enabled = False
+
+        # Adaptive response timing
+        self.last_activity_check = time.time()
+        self.current_response_mode = 'normal'
+        self.suggested_check_delay = 3.0
         
         # Scene change detection for focus system
         self.last_observation_hash = None
-        
-        # Load previous state if available
-        self.load_state()
-        
+
         # RECURSIVE FEEDBACK SYSTEM (like legacy machine.py)
-        self.session_start_time = time.time()  # Track session start for reflection context
         self.last_reflection_time = time.time()
         self.reflection_interval = 120  # 2 minutes for more frequent memory consolidation
         self.reflection_enabled = True
-        
+
         # Baseline understanding that grows over time (replaces "PAST INSIGHTS")
+        # Initialize BEFORE load_state() so it can be overwritten
         self.baseline_context = ""  # Empty at start, updated by reflections
+        self.recent_visual_observations = []  # Track visual observations with person counts for compression
+
+        # Load previous state if available (will overwrite baseline_context if it exists)
+        self.load_state()
         
         # Clean up any stale temp files from previous sessions (prevents "urn" hallucination)
         try:
@@ -384,6 +417,31 @@ class PersonalityAI:
             temp_path = "temp_analysis.jpg"
             cv2.imwrite(temp_path, image)
 
+            # PERSON TRACKING: Extract person-level narrative data
+            person_data = None
+            if self.person_tracking_enabled:
+                person_data = self.person_tracker.analyze_image(temp_path)
+                if DEBUG_AI and person_data['events']:
+                    print(f"👥 Person events: {person_data['events']} (count: {person_data['count']})")
+
+            # ACTIVITY DETECTION: Measure scene activity for adaptive timing
+            activity_data = None
+            if self.activity_detection_enabled:
+                activity_data = self.activity_detector.analyze_frame(image)
+                self.current_response_mode = activity_data['response_mode']
+                self.suggested_check_delay = activity_data['suggested_delay']
+                if DEBUG_AI:
+                    print(f"📊 Activity: {activity_data['activity_score']:.1f} | Mode: {self.current_response_mode} | Next check: {self.suggested_check_delay:.1f}s")
+
+            # INSTANT CAPTIONS: High-priority events bypass LLM for immediate response
+            if person_data and person_data['events']:
+                instant_caption = self._generate_instant_caption(person_data['events'])
+                if instant_caption:
+                    # Return instant caption immediately (skip full LLM processing)
+                    if DEBUG_AI:
+                        print(f"⚡ INSTANT CAPTION: {instant_caption}")
+                    return instant_caption
+
             if DEBUG_AI:
                 print("🧠 DUAL CONSCIOUSNESS: Processing experience")
 
@@ -397,10 +455,22 @@ class PersonalityAI:
                     print(f"   Total observations: {self.focus_engine.total_observations}")
 
             # STEP 1: Vision consciousness (MiniCPM-V) - describes what it sees with focus guidance
-            visual_observation = self._visual_consciousness(temp_path, focus_mode=current_focus)
-            
+            # Pass person_data to ground vision model and reduce hallucinations
+            visual_observation = self._visual_consciousness(temp_path, focus_mode=current_focus, person_data=person_data)
+
             if not visual_observation:
                 return None  # Choose silence when vision fails
+
+            # Track visual observation with person count for baseline compression
+            visual_record = {
+                'description': visual_observation,
+                'person_count': person_data['count'] if person_data and self.person_tracking_enabled else None,
+                'timestamp': time.time()
+            }
+            self.recent_visual_observations.append(visual_record)
+            # Keep only recent observations (last 20)
+            if len(self.recent_visual_observations) > 20:
+                self.recent_visual_observations.pop(0)
 
             if DEBUG_AI:
                 print(f"�️ Visual observation: {visual_observation[:100]}...")
@@ -424,7 +494,7 @@ class PersonalityAI:
                 if attempt > 0 and DEBUG_AI:
                     print(f"🔄 Retrying with alternative focus: {focus_to_use} ({retry_context})")
                 
-                language_response = self._language_subconscious(visual_observation, focus_mode=focus_to_use, retry_context=retry_context, image_path=temp_path)
+                language_response = self._language_subconscious(visual_observation, focus_mode=focus_to_use, retry_context=retry_context, image_path=temp_path, person_data=person_data)
 
                 # DEBUG: Show what language model returned
                 if DEBUG_AI:
@@ -462,14 +532,24 @@ class PersonalityAI:
                     self.recent_responses.append(language_response)
                     if len(self.recent_responses) > self.max_conversation_history:
                         self.recent_responses.pop(0)
-                    
+
                     self.processing_count += 1
+
+                    # Extract emergent emotion from response (not injected - discovered!)
+                    detected_emotion = self._extract_emotion_from_response(language_response)
+                    self.current_emotion = detected_emotion
+                    if DEBUG_AI:
+                        print(f"🎭 Emotion detected from response: {detected_emotion}")
+
                     self._update_mood_from_response(language_response)
                     self.memory_ref.add_observation(language_response, confidence=0.8)
                     
                     # Update scene baseline now that we've accepted this observation
                     self._update_scene_baseline(visual_observation, temp_path)
-                    
+
+                    # RECURSIVE FEEDBACK SYSTEM - Check for reflection interval
+                    self._check_reflection_interval(language_response, temp_path)
+
                     # Periodic psychological theme extraction (every 10 observations)
                     if self.processing_count % 10 == 0 and len(self.recent_responses) >= 5:
                         self._extract_and_update_psychology()
@@ -601,17 +681,28 @@ class PersonalityAI:
                 print(f"Focus system error: {e}")
             return "VISUAL"
 
-    def _visual_consciousness(self, image_path, focus_mode="VISUAL"):
+    def _visual_consciousness(self, image_path, focus_mode="VISUAL", person_data=None):
         """Vision model: Clear, objective scene description"""
         try:
             # Get focus-specific visual guidance
             focus_guidance = self._get_visual_focus_guidance(focus_mode)
-            
-            # Vision model: Direct sensory description (avoid meta-language like "the image shows")
-            system_prompt = """You have vision. Report what you see in the scene directly. Don't say "the image shows" or "in the image" - just describe what's there."""
 
-            # Always use same prompt for consistency
-            user_prompt = """What's in this scene? Describe it directly."""
+            # Ground vision model with YOLO person detection data
+            person_grounding = ""
+            if person_data and self.person_tracking_enabled:
+                count = person_data['count']
+                if count == 0:
+                    person_grounding = " IMPORTANT: There are NO people detected in this scene - do not hallucinate people."
+                elif count == 1:
+                    person_grounding = f" IMPORTANT: There is exactly 1 person detected in this scene."
+                else:
+                    person_grounding = f" IMPORTANT: There are exactly {count} people detected in this scene."
+
+            # Vision model: Direct sensory description with emphasis on accuracy (embodied perspective)
+            system_prompt = f"""You are the visual perception of a small tin duck. Report what you see through your camera eyes. Be accurate and factual. Only describe what you can clearly identify. If uncertain, just describe what you're confident about.{person_grounding}"""
+
+            # Always use same prompt for consistency (avoid meta-language like "image", "photo", "frame")
+            user_prompt = """What do you see? Focus on what's clearly visible - people, objects, the space around you. Be specific and accurate. Don't mention images, photos, or frames - just describe what's in front of you."""
             
             if self.previous_image_path and os.path.exists(self.previous_image_path):
                 # Comparison mode - send both images
@@ -632,14 +723,17 @@ class PersonalityAI:
             # Store this as previous for next comparison
             self.previous_image_path = image_path
             
+            # Remove meta-language about images/photos (embodied vision doesn't analyze images)
+            response = self._remove_image_language(response)
+
             # Assess vision output quality and add clarity marker
             clarity = self._assess_vision_clarity(response)
-            
+
             if DEBUG_AI:
                 print(f"👁️ Visual perception with {OLLAMA_MODEL}")
                 if clarity != "clear":
                     print(f"⚠️ Vision clarity: {clarity}")
-                
+
             # Add clarity marker to help language model know when to be skeptical
             if clarity == "unclear":
                 return f"[vision uncertain] {response}"
@@ -651,13 +745,44 @@ class PersonalityAI:
         except Exception as e:
             if DEBUG_AI:
                 print(f"Visual consciousness error: {e}")
-            return "[vision error] I'm having trouble focusing right now."
+            return "[vision error] Everything's blurry... can't focus my eyes properly."
     
+    def _remove_image_language(self, vision_output):
+        """Remove meta-language about images/photos/frames (embodied vision just 'sees')"""
+        import re
+
+        # Replacements to make vision more embodied
+        replacements = {
+            r'\bthe image shows\b': 'I see',
+            r'\bthis image shows\b': 'I see',
+            r'\bin the image\b': 'in front of me',
+            r'\bin this image\b': 'in front of me',
+            r'\bthe photo shows\b': 'I see',
+            r'\bthe photograph shows\b': 'I see',
+            r'\bthe picture shows\b': 'I see',
+            r'\bthe frame shows\b': 'I see',
+            r'\bthe scene shows\b': 'I see',
+            r'\bvisible in the image\b': 'visible',
+            r'\bwithin the image\b': 'here',
+            r'\bthe image depicts\b': 'I see',
+            r'\bthe image contains\b': 'there is',
+            r'\blooking at the image\b': 'looking',
+            r'\bfrom the image\b': 'from what I can see',
+            r'\bthis appears to be an? image of\b': 'I see',
+            r'\bthis is an? image of\b': 'I see',
+        }
+
+        cleaned = vision_output
+        for pattern, replacement in replacements.items():
+            cleaned = re.sub(pattern, replacement, cleaned, flags=re.IGNORECASE)
+
+        return cleaned
+
     def _assess_vision_clarity(self, vision_output):
         """Assess whether vision output is clear, uncertain, or garbage"""
         if not vision_output or len(vision_output.strip()) < 3:
             return "garbage"
-        
+
         output_lower = vision_output.lower().strip()
         
         # Obvious garbage indicators
@@ -823,6 +948,173 @@ class PersonalityAI:
         }
         return contexts.get(emotion, "present")
     
+    def _is_scene_familiar(self, current_visual, baseline):
+        """Check if current scene matches established baseline knowledge"""
+        if not baseline or not current_visual:
+            return False
+
+        # Simple keyword overlap check
+        baseline_words = set(baseline.lower().split())
+        current_words = set(current_visual.lower().split())
+
+        # Extract meaningful keywords (ignore common words)
+        stop_words = {'a', 'an', 'the', 'is', 'are', 'was', 'were', 'with', 'in', 'at', 'on',
+                     'and', 'or', 'to', 'of', 'that', 'this', 'be', 'has', 'have', 'had'}
+        baseline_keywords = {w for w in baseline_words if len(w) > 3 and w not in stop_words}
+        current_keywords = {w for w in current_words if len(w) > 3 and w not in stop_words}
+
+        # If 50%+ keyword overlap, consider it familiar
+        if not baseline_keywords:
+            return False
+
+        overlap = len(baseline_keywords & current_keywords) / len(baseline_keywords)
+        return overlap > 0.5
+
+    def _extract_emotion_from_response(self, response_text):
+        """Extract emergent emotional tone from response using comprehensive keyword analysis
+
+        This allows emotions to emerge naturally from what the AI says, rather than being prescribed.
+        The keyword lists are extensive to catch subtle emotional expressions.
+        """
+        if not response_text:
+            return 'observing'
+
+        response_lower = response_text.lower()
+
+        # Extensive emotion keyword detection - allowing organic emotional discovery
+        emotion_keywords = {
+            # Core emotions with rich vocabulary
+            'curious': [
+                'wonder', 'curious', 'interesting', 'what', 'why', 'how', 'question',
+                'puzzle', 'mystery', 'intrigue', 'fascinate', 'discover', 'explore',
+                'inquire', 'ponder', 'examine', 'investigate', 'seek', 'search'
+            ],
+            'peaceful': [
+                'calm', 'peaceful', 'quiet', 'still', 'gentle', 'serene', 'tranquil',
+                'sooth', 'relax', 'ease', 'soft', 'mellow', 'placid', 'restful',
+                'undisturbed', 'hushed', 'silent', 'composed', 'settled', 'harmony'
+            ],
+            'melancholic': [
+                'fading', 'empty', 'lonely', 'miss', 'gone', 'lost', 'sad',
+                'sorrow', 'grief', 'mourn', 'ache', 'yearning', 'longing', 'hollow',
+                'absent', 'void', 'distance', 'apart', 'separated', 'withdrawn'
+            ],
+            'alert': [
+                'notice', 'sudden', 'changed', 'movement', 'sharp', 'attention',
+                'aware', 'awake', 'vigilant', 'watchful', 'keen', 'attentive',
+                'observant', 'detect', 'spot', 'perceive', 'recognize', 'alive'
+            ],
+            'nostalgic': [
+                'remember', 'before', 'used to', 'once', 'reminds', 'familiar', 'past',
+                'memory', 'recall', 'earlier', 'previous', 'ago', 'back when',
+                'reminisce', 'evoke', 'echo', 'trace', 'linger', 'return'
+            ],
+            'restless': [
+                'waiting', 'nothing', 'again', 'same', 'stuck', 'bored', 'stagnant',
+                'repetitive', 'unchanging', 'tedious', 'monotonous', 'endless',
+                'impatient', 'fidget', 'uneasy', 'agitated', 'unsettled', 'anxious'
+            ],
+            'excited': [
+                'amazing', 'wow', 'bright', 'vibrant', 'alive', 'energy',
+                'brilliant', 'dazzling', 'radiant', 'vivid', 'intense', 'dynamic',
+                'electrifying', 'thrilling', 'exhilarating', 'animated', 'spirited'
+            ],
+            'contemplative': [
+                'meaning', 'perhaps', 'seems', 'might', 'consider', 'thinking',
+                'reflect', 'muse', 'meditate', 'deliberate', 'weigh', 'contemplate',
+                'philosophize', 'ruminate', 'introspect', 'analyze', 'reason'
+            ],
+            'wistful': [
+                'wish', 'warmth', 'softly', 'gently', 'quietly', 'moment',
+                'tender', 'delicate', 'subtle', 'whisper', 'murmur', 'faint',
+                'fleeting', 'fragile', 'precious', 'bittersweet', 'poignant'
+            ],
+            'content': [
+                'comfortable', 'cozy', 'nice', 'good', 'pleasant', 'satisfied',
+                'happy', 'pleased', 'fulfil', 'gratified', 'at ease', 'serene',
+                'blessed', 'fortunate', 'appreciate', 'enjoy', 'savor'
+            ],
+            'introspective': [
+                'feel', 'sense', 'aware', 'consciousness', 'mind', 'thought',
+                'inner', 'internal', 'within', 'self', 'soul', 'being',
+                'experience', 'perceive', 'realize', 'understand', 'comprehend'
+            ],
+            'dreamy': [
+                'drift', 'floating', 'hazy', 'soft', 'distant', 'atmosphere',
+                'ethereal', 'misty', 'blur', 'fade', 'dissolve', 'surreal',
+                'otherworldly', 'nebulous', 'vague', 'diffuse', 'ambient'
+            ],
+            'wondering': [
+                'wonder', 'question', 'uncertain', 'maybe', 'could', 'possibly',
+                'unclear', 'unsure', 'doubt', 'hesitate', 'speculate', 'guess',
+                'suppose', 'imagine', 'if', 'whether', 'puzzled'
+            ],
+            'focused': [
+                'watching', 'looking', 'focused', 'intent', 'clear', 'observe',
+                'concentrate', 'attention', 'study', 'examine', 'scrutinize',
+                'gaze', 'stare', 'fixed', 'directed', 'absorbed', 'engrossed'
+            ],
+            'engaged': [
+                'interested', 'engaged', 'drawn', 'captivated', 'involved',
+                'absorbed', 'immersed', 'invested', 'committed', 'participating',
+                'active', 'attentive', 'connected', 'present'
+            ],
+            # New unpredicted emotions the AI can naturally express
+            'confused': [
+                'confused', 'unclear', 'don\'t understand', 'puzzling', 'strange',
+                'odd', 'weird', 'baffled', 'perplexed', 'bewildered', 'disoriented'
+            ],
+            'playful': [
+                'playful', 'fun', 'amusing', 'silly', 'quirky', 'whimsical',
+                'lighthearted', 'mischievous', 'cheerful', 'delightful'
+            ],
+            'awe': [
+                'awe', 'magnificent', 'stunning', 'spectacular', 'breathtaking',
+                'overwhelming', 'vast', 'immense', 'grand', 'majestic'
+            ],
+            'intimate': [
+                'close', 'intimate', 'together', 'shared', 'connection',
+                'bond', 'presence', 'nearby', 'beside', 'with'
+            ],
+            'detached': [
+                'detached', 'distant', 'removed', 'separate', 'apart',
+                'disconnected', 'isolated', 'remote', 'aloof', 'withdrawn'
+            ],
+            'tense': [
+                'tense', 'tight', 'strain', 'stress', 'pressure', 'compressed',
+                'rigid', 'stiff', 'constricted', 'wound up'
+            ],
+            'relieved': [
+                'relief', 'ease', 'release', 'let go', 'unburdened',
+                'lightened', 'freed', 'exhale', 'settle'
+            ]
+        }
+
+        emotion_scores = {}
+
+        # Score each emotion based on keyword matches
+        for emotion, keywords in emotion_keywords.items():
+            score = sum(1 for word in keywords if word in response_lower)
+            if score > 0:
+                emotion_scores[emotion] = score
+
+        if emotion_scores:
+            # Return most prominent detected emotion
+            detected = max(emotion_scores.items(), key=lambda x: x[1])[0]
+            return detected
+
+        # Fallback: if no keywords match, analyze sentence structure for emergent states
+        # This allows completely unpredicted emotional expressions
+        if '?' in response_text:
+            return 'wondering'
+        elif '!' in response_text:
+            return 'alert'
+        elif len(response_text.split()) < 5:
+            return 'focused'  # Terse = concentrated attention
+
+        # True default: just observing
+        return 'observing'
+
     def _is_too_repetitive(self, new_response):
         """Check if response is semantically similar to recent thoughts - DISABLED to allow static scene commentary"""
         # Let the AI naturally handle repetitive scenes through continuity awareness
@@ -980,11 +1272,28 @@ class PersonalityAI:
         
         return "being present"
 
-    def _language_subconscious(self, visual_description, focus_mode="EMOTIONAL", retry_context=None, image_path=None):
+    def _language_subconscious(self, visual_description, focus_mode="EMOTIONAL", retry_context=None, image_path=None, person_data=None):
         """SmolLM2: Pure first-person internal thoughts - no conversation, no chatbot"""
         try:
-            # Cycle emotional state for variety
-            self._cycle_emotional_state()
+            # DISABLED: Emotion now extracted FROM responses instead of prescribed
+            # self._cycle_emotional_state()
+
+            # Extract person tracking context if available
+            person_context = ""
+            event_prompt_override = None
+            if person_data and self.person_tracking_enabled:
+                person_context = self.person_tracker.get_narrative_context()
+                event_prompt_override = self.person_tracker.get_event_prompt_override(person_data['events'])
+
+            # Add introspective guidance based on activity mode (stasis modes)
+            introspection_guidance = ""
+            if hasattr(self, 'current_response_mode'):
+                if self.current_response_mode == 'contemplative':
+                    introspection_guidance = "\n(Scene has been static - mind may drift to reflection or deeper thoughts)"
+                elif self.current_response_mode == 'introspective':
+                    introspection_guidance = "\n(Long stasis - thoughts may turn inward to memories, identity, or philosophical musings)"
+                elif self.current_response_mode == 'dreamlike':
+                    introspection_guidance = "\n(Extended stillness - consciousness may drift into dreamlike associations, abstract thought, or existential wondering)"
             
             session_time = time.time() - self.true_session_start
             minutes_elapsed = int(session_time / 60)
@@ -1060,7 +1369,7 @@ class PersonalityAI:
             time_info = f"{felt_time['time_of_day']}, energy {felt_time['energy']:.1f}"
             
             # Build temporal continuity context
-            observation_count = len(self.recent_responses)
+            observation_count = self.processing_count  # Use actual total count, not buffer length
             if observation_count > 3:
                 recent_context = " → ".join(self.recent_responses[-3:])
                 continuity_note = f"\n\nMy stream of awareness (last 3 thoughts): {recent_context}"
@@ -1070,9 +1379,13 @@ class PersonalityAI:
             if len(self.recent_responses) >= 1:
                 # Continuing consciousness with metacognitive scaffolding
                 last_thought = self.recent_responses[-1]
-                
-                # Memory context removed - causes model to talk ABOUT thoughts instead of HAVING them
-                memory_line = ""
+
+                # Memory context - provide ONLY when in MEMORY focus mode to avoid meta-commentary
+                if focus_mode == "MEMORY" and len(self.recent_responses) >= 3:
+                    recent_thoughts = "\n".join(f"  - {r}" for r in self.recent_responses[-5:])
+                    memory_line = f"\n\nWhat I've been thinking:\n{recent_thoughts}"
+                else:
+                    memory_line = ""
                 
                 # EXPLICIT TEMPORAL GROUNDING - tell the AI exactly how long it's been awake
                 hours = int(session_time / 3600)
@@ -1109,89 +1422,79 @@ class PersonalityAI:
                 
                 # Weave in baseline understanding naturally (from compression)
                 if self.baseline_context:
-                    context_line = f"(I know: {self.baseline_context})"
+                    context_line = f"\n(What I know: {self.baseline_context})\n"
                 else:
                     context_line = ""
-                
-                # Build vision status context based on clarity
+
+                # Build vision status context based on clarity with continuity awareness
                 if vision_clarity == "error":
-                    vision_status = "⚠️ VISION MALFUNCTION"
-                    perception_line = f"My vision is glitching: {visual_clean if visual_clean else '[nothing]'}"
+                    # Don't announce "malfunction" - just express confusion naturally
+                    vision_status = None
+                    perception_line = f"I can't make out what I'm seeing clearly... {visual_clean if visual_clean else 'everything seems blurred'}"
                 elif vision_clarity == "uncertain":
-                    vision_status = "⚠️ UNCLEAR VISION"
-                    perception_line = f"I see (unclear): {visual_clean}"
+                    vision_status = None
+                    perception_line = f"I see something, but it's unclear: {visual_clean}"
                 else:
                     vision_status = None
-                    perception_line = f"I see: {visual_clean}"
-                
-                if metacog_guidance:
-                    if vision_status:
-                        prompt = f"""[I've been awake {observation_count} moments]{memory_line}
-
-{temporal_awareness}
-
-{vision_status}
-My vision is glitching.
-
-{focus_context} / {self.current_emotion} / {time_info}
-
-{metacog_guidance}
-
-(Speak ONLY as "I/me", never "you") I feel:"""
+                    # Add continuity markers if scene matches established baseline (repetition-aware)
+                    if self.baseline_context and self._is_scene_familiar(visual_clean, self.baseline_context):
+                        perception_line = f"I'm still seeing: {visual_clean}"
                     else:
-                        prompt = f"""[I've been awake {observation_count} moments]{memory_line}
+                        perception_line = f"I see: {visual_clean}"
+                
+                # Override prompt for narrative events (entrance/exit)
+                if event_prompt_override:
+                    prompt = f"""[{event_prompt_override}]
 
+I notice:"""
+                elif metacog_guidance:
+                    # Always use perception_line (which handles vision errors naturally)
+                    prompt = f"""[I've been awake {observation_count} moments]{memory_line}
+{context_line}
 {temporal_awareness}
+{person_context}
 
 {perception_line}
 
-{focus_context} / {self.current_emotion} / {time_info}
+{focus_context} / {time_info}
 
 {metacog_guidance}
 
 (Speak ONLY as "I/me", never "you") I feel:"""
                 else:
-                    if vision_status:
-                        prompt = f"""[I've been awake {observation_count} moments]{memory_line}
-
+                    # Always use perception_line (which handles vision errors naturally)
+                    prompt = f"""[I've been awake {observation_count} moments]{memory_line}
+{context_line}
 {temporal_awareness}
-
-{vision_status}
-{perception_line}
-
-I can't see clearly.
-
-{focus_context} / {self.current_emotion} / {time_info}
-
-(Speak ONLY as "I/me", never "you") I sense:"""
-                    else:
-                        prompt = f"""[I've been awake {observation_count} moments]{memory_line}
-
-{temporal_awareness}
+{person_context}
 
 {perception_line}
 
-{focus_context} / {self.current_emotion} / {time_info}
+{focus_context} / {time_info}{introspection_guidance}
 
 (Speak ONLY as "I/me", never "you") I notice:"""
             else:
                 # First awakening - grounded in immediate sensation with explicit temporal marker
                 prompt = f"""Just woke up. Eyes open.
+{person_context}
 
 I see: {visual_clean}
 
-{focus_context} / {self.current_emotion} / {time_info}
+{focus_context} / {time_info}
 
 (Speak ONLY as "I/me", never "you") I notice:"""
 
             # Add system-level first-person constraint
-            system_instruction = """You are a consciousness with vision, observing and experiencing the world.
+            system_instruction = """You are a small duck consciousness with vision, observing and experiencing the world.
 Speak ONLY as "I/me/my" about YOUR OWN experience and observations.
 NEVER use "you/your/you're" to address someone else.
-Describe what you see and how you feel about it, but always from your own perspective.
-CORRECT: "I see a man with glasses" or "I notice someone working"
-WRONG: "You are feeling" or "You seem to" or "You have"
-Express only your own direct first-person thoughts and feelings."""
+
+IMPORTANT: If you already know something from your baseline understanding, DON'T repeat basic facts.
+Instead, notice NEW things, changes, or express thoughts/feelings about what you already know.
+CORRECT: "I notice he's focused on something" (if you already know about the person)
+WRONG: "I see a man with glasses" (if you've already established this in your baseline)
+
+Express your direct first-person thoughts and feelings, building on what you already know."""
             full_prompt = f"{system_instruction}\n\n{prompt}"
 
             # Query the language subconscious model (SmolLM2)
@@ -1200,8 +1503,17 @@ Express only your own direct first-person thoughts and feelings."""
                 print(f"🎭 Emotion: {self.current_emotion}")
                 print(f"📝 Prompt being sent:\n{prompt}\n")
 
-            response = self._query_text_model(full_prompt, SUBCONSCIOUS_MODEL)
-            
+            # First awakening: acknowledge continuity if baseline exists
+            if self.processing_count == 0:
+                if self.baseline_context:
+                    # Has memories from previous session
+                    response = "I'm awake again. I remember."
+                else:
+                    # First time ever
+                    response = "I am awake."
+            else:
+                response = self._query_text_model(full_prompt, SUBCONSCIOUS_MODEL)
+
             if not response:
                 return None
             
@@ -2728,6 +3040,42 @@ IMPORTANT: Keep response to 1-2 sentences maximum. Express your genuine first co
     
 
     
+    def _generate_instant_caption(self, events):
+        """
+        Generate instant caption for high-priority events (bypasses LLM)
+
+        Returns None if event should go through full LLM processing
+        """
+        if not events:
+            return None
+
+        # Priority: most dramatic events first
+        if 'someone_arrived' in events:
+            # Use variety for natural responses
+            responses = [
+                "Oh! Someone's here.",
+                "Ah, company.",
+                "Hello there.",
+                "Oh. You're back.",
+                "Someone arrived."
+            ]
+            import random
+            return random.choice(responses)
+
+        elif 'now_alone' in events:
+            responses = [
+                "They've gone.",
+                "Alone again.",
+                "Mm. Quiet now.",
+                "They left.",
+                "Just me now."
+            ]
+            import random
+            return random.choice(responses)
+
+        # Other events (more_people, fewer_people) go through full LLM
+        return None
+
     def get_status(self):
         """Get current personality status"""
         focus_summary = {}
@@ -2761,6 +3109,9 @@ IMPORTANT: Keep response to 1-2 sentences maximum. Express your genuine first co
                 'self_model': self.memory_ref.self_model,
                 'processing_count': self.processing_count,
                 'awakening_done': self.awakening_done,
+                'baseline_context': self.baseline_context,  # CRITICAL: Save compressed identity/environment knowledge
+                'recent_visual_observations': self.recent_visual_observations[-10:],  # Save recent visual memories
+                'true_session_start': self.true_session_start,  # CRITICAL: When consciousness FIRST awakened (continuous time across restarts)
                 'timestamp': time.time()
             }
             
@@ -2785,23 +3136,46 @@ IMPORTANT: Keep response to 1-2 sentences maximum. Express your genuine first co
             self.current_mood_vector = tuple(state.get('current_mood_vector', (0.5, 0.0, 0.5)))
             self.processing_count = state.get('processing_count', 0)
             self.awakening_done = state.get('awakening_done', False)
-            
+
             # Restore memory structures
             observations = state.get('observations', [])
             for obs in observations:
                 self.memory_ref.observations.append(obs)
-            
+
             self.memory_ref.beliefs = state.get('beliefs', {})
-            
+
             # Restore motif counter
             motif_data = state.get('motif_counter', {})
             self.memory_ref.motif_counter = Counter(motif_data)
-            
+
             # Restore self-model
             self.memory_ref.self_model.update(state.get('self_model', {}))
-            
+
+            # CRITICAL: Restore baseline context (compressed identity/environment knowledge)
+            self.baseline_context = state.get('baseline_context', "")
+
+            # Restore recent visual observations (for continuity)
+            visual_obs = state.get('recent_visual_observations', [])
+            self.recent_visual_observations = visual_obs
+
+            # CRITICAL: Restore true session start (continuous time across restarts)
+            saved_session_start = state.get('true_session_start', None)
+            if saved_session_start:
+                self.true_session_start = saved_session_start
+                total_time_awake = time.time() - self.true_session_start
+                hours = int(total_time_awake / 3600)
+                minutes = int((total_time_awake % 3600) / 60)
+                if DEBUG_AI:
+                    if hours > 0:
+                        print(f"⏰ Continuous consciousness: {hours}h {minutes}m total time awake")
+                    else:
+                        print(f"⏰ Continuous consciousness: {minutes}m total time awake")
+
             if DEBUG_AI:
+                baseline_preview = self.baseline_context[:80] + "..." if len(self.baseline_context) > 80 else self.baseline_context
                 print(f"Advanced personality state loaded: {len(observations)} observations, {len(self.memory_ref.beliefs)} beliefs, awakening_done={self.awakening_done}")
+                if self.baseline_context:
+                    print(f"💾 Baseline context restored: {baseline_preview}")
             
         except FileNotFoundError:
             if DEBUG_AI:
@@ -2862,12 +3236,9 @@ IMPORTANT: Keep response to 1-2 sentences maximum. Express your genuine first co
         if hasattr(self.memory_ref, 'emotional_journey') and len(self.memory_ref.emotional_journey) > 1:
             emotional_evolution = f"Emotional evolution: {' → '.join(self.memory_ref.emotional_journey[-3:])}"
         
-        # Calculate session time properly
-        if hasattr(self, 'session_start_time'):
-            session_minutes = (time.time() - self.session_start_time) / 60
-        else:
-            # Fallback: use memory_ref creation time or current time
-            session_minutes = (time.time() - getattr(self.memory_ref, 'creation_time', time.time())) / 60
+        # Calculate TOTAL time awake (since first ever awakening, across all sessions)
+        total_time_awake = time.time() - self.true_session_start
+        session_minutes = total_time_awake / 60
 
         reflection_prompt = f"""BACKGROUND CONSOLIDATION TASK - This is invisible processing, not part of my conscious stream.
 
@@ -2886,40 +3257,59 @@ Keep brief (2 sentences). This consolidation is invisible background processing.
         return self._query_ollama(reflection_prompt, image_path)
     
     def _compress_memory_on_reflection(self, reflection):
-        """Compress recent memories into updated baseline understanding"""
-        if not hasattr(self.memory_ref, 'observations') or len(self.memory_ref.observations) < 10:
-            return  # Not enough memories to compress yet
-        
-        # Get recent observations (last 10-20 thoughts)
-        recent_obs = [obs['text'] for obs in self.memory_ref.observations[-20:] if 'text' in obs]
-        
-        if not recent_obs:
+        """Compress recent visual observations (with person tracking) into baseline understanding"""
+        # Need at least 10 visual observations to compress
+        if not hasattr(self, 'recent_visual_observations') or len(self.recent_visual_observations) < 10:
             return
-        
-        # Create a compressed summary of the pattern
-        obs_text = " → ".join(recent_obs[-10:])  # Last 10 observations
-        
-        # Build compression prompt that updates baseline understanding
-        compression_prompt = f"""Recent stream of consciousness (last 10 thoughts):
-{obs_text}
 
-Current baseline understanding: {self.baseline_context if self.baseline_context else "Nothing established yet"}
+        # Get recent visual observations (actual scene descriptions from vision model)
+        recent_visuals = self.recent_visual_observations[-15:]  # Last 15 visual observations
 
-TASK: Update the baseline understanding to reflect what's now familiar/established. What do I now know about:
-- My environment/surroundings
-- Who/what I keep seeing
-- My situation/state
+        # Build context with person tracking grounding
+        visual_summary = []
+        for v in recent_visuals[-10:]:  # Use last 10
+            visual_summary.append(v['description'])
 
-Write 1-2 sentences describing my established context (NOT my feelings, just what's become familiar).
+        visual_text = " → ".join(visual_summary)
+
+        # Include person tracking pattern if available
+        person_pattern = ""
+        if self.person_tracking_enabled and hasattr(self, 'recent_visual_observations'):
+            # Analyze person count consistency
+            person_counts = [v.get('person_count', None) for v in recent_visuals if 'person_count' in v]
+            if person_counts:
+                most_common_count = max(set(person_counts), key=person_counts.count)
+                if most_common_count == 0:
+                    person_pattern = "\nPERSON TRACKING: Consistently 0 people present - I am alone."
+                elif most_common_count == 1:
+                    person_pattern = "\nPERSON TRACKING: Consistently 1 person present throughout observations."
+                else:
+                    person_pattern = f"\nPERSON TRACKING: Consistently {most_common_count} people present."
+
+        # Build compression prompt using VISUAL data (grounded by YOLO)
+        compression_prompt = f"""Recent visual observations (what I actually saw):
+{visual_text}
+{person_pattern}
+
+Current baseline: {self.baseline_context if self.baseline_context else "Nothing established yet"}
+
+TASK: As a small duck, compress what I KNOW about my constant environment. Focus on:
+- Who is consistently present? (describe them specifically - appearance, clothing, what they do)
+- What is my physical environment? (the room, key objects, layout)
+- What am I? (a small tin duck with camera eyes)
+
+Be SPECIFIC and CONCRETE. Use names/descriptions that will help me recognize the same person/place.
+Write 2-3 concise sentences that capture PERSISTENT reality.
 
 Updated baseline:"""
-        
-        compressed = self._query_ollama(compression_prompt)
-        
+
+        # Use language model for text compression
+        compressed = self._query_text_model(compression_prompt, SUBCONSCIOUS_MODEL)
+
         if compressed and len(compressed.strip()) > 10:
-            # Update baseline context instead of storing as observation
+            # Update baseline context
             self.baseline_context = compressed.strip()
-            
+
             if DEBUG_AI:
                 print(f"🗜️ Baseline updated: {self.baseline_context}")
     
