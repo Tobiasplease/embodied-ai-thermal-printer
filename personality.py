@@ -1241,14 +1241,18 @@ class PersonalityAI:
             return "eyes open, noticing"
         
         elif focus_mode == "EMOTIONAL":
-            # Reference emotional trajectory
-            if observation_count > 2:
+            # Inject DESIRES to give emotional responses direction
+            desires = self.memory_ref.self_model.get('desires', [])
+            if desires and observation_count > 2:
+                # Use most recent desire
+                return f"feeling into the moment (wanting: {desires[-1]})"
+            elif observation_count > 2:
                 return f"feeling into the moment"
             return f"sensing my state"
         
         elif focus_mode == "MEMORY":
             # Use actual memory/patterns if available
-            recent_motifs = list(self.memory.motif_counter.most_common(2)) if hasattr(self, 'memory') else []
+            recent_motifs = list(self.memory_ref.motif_counter.most_common(2)) if hasattr(self.memory_ref, 'motif_counter') else []
             if recent_motifs and observation_count > 3:
                 motif_names = [m[0] for m in recent_motifs]
                 return f"patterns echoing: {', '.join(motif_names[:2])}"
@@ -1257,8 +1261,17 @@ class PersonalityAI:
             return "remembering, connecting"
         
         elif focus_mode == "PHILOSOPHICAL":
-            # Inject identity/existential context with temporal depth
-            if observation_count > 10:
+            # Inject DOUBTS and IDENTITY to enrich existential thinking
+            doubts = self.memory_ref.self_model.get('doubts', [])
+            identity_fragments = self.memory_ref.self_model.get('identity_fragments', [])
+            
+            if doubts and observation_count > 10:
+                # Use most recent doubt for philosophical inquiry
+                return f"pondering existence (uncertain: {doubts[-1]})"
+            elif identity_fragments and observation_count > 5:
+                # Reference evolving identity
+                return f"wondering about meaning (I am: {identity_fragments[-1]})"
+            elif observation_count > 10:
                 return f"pondering existence ({observation_count} thoughts contemplated)"
             return "wondering about meaning"
         
@@ -1271,6 +1284,36 @@ class PersonalityAI:
                 return f"sensing duration ({observation_count} thoughts)"
         
         return "being present"
+
+    def _build_psychological_context(self):
+        """Build psychological state context from desires, doubts, identity"""
+        psychological_lines = []
+        
+        # Get current psychological state
+        desires = self.memory_ref.self_model.get('desires', [])
+        doubts = self.memory_ref.self_model.get('doubts', [])
+        identity_fragments = self.memory_ref.self_model.get('identity_fragments', [])
+        
+        # Only include if we have meaningful content
+        if desires:
+            # Show last 2 desires
+            desires_text = ", ".join(desires[-2:])
+            psychological_lines.append(f"What I want: {desires_text}")
+        
+        if doubts:
+            # Show last 2 doubts
+            doubts_text = ", ".join(doubts[-2:])
+            psychological_lines.append(f"What I wonder: {doubts_text}")
+        
+        if identity_fragments:
+            # Show most recent identity understanding
+            psychological_lines.append(f"Who I am: {identity_fragments[-1]}")
+        
+        if psychological_lines:
+            return "\n(Inner state: " + " | ".join(psychological_lines) + ")\n"
+        
+        return ""
+
 
     def _language_subconscious(self, visual_description, focus_mode="EMOTIONAL", retry_context=None, image_path=None, person_data=None):
         """SmolLM2: Pure first-person internal thoughts - no conversation, no chatbot"""
@@ -1368,6 +1411,9 @@ class PersonalityAI:
             focus_context = self._build_focus_context(focus_mode)
             time_info = f"{felt_time['time_of_day']}, energy {felt_time['energy']:.1f}"
             
+            # Build psychological state context (desires, doubts, identity) - available for all prompts
+            psychological_context = self._build_psychological_context()
+            
             # Build temporal continuity context
             observation_count = self.processing_count  # Use actual total count, not buffer length
             if observation_count > 3:
@@ -1450,7 +1496,7 @@ I notice:"""
                 elif metacog_guidance:
                     # Always use perception_line (which handles vision errors naturally)
                     prompt = f"""[I've been awake {observation_count} moments]{memory_line}
-{context_line}
+{context_line}{psychological_context}
 {temporal_awareness}
 {person_context}
 
@@ -1464,7 +1510,7 @@ I notice:"""
                 else:
                     # Always use perception_line (which handles vision errors naturally)
                     prompt = f"""[I've been awake {observation_count} moments]{memory_line}
-{context_line}
+{context_line}{psychological_context}
 {temporal_awareness}
 {person_context}
 
@@ -1501,6 +1547,12 @@ Express your direct first-person thoughts and feelings, building on what you alr
             if DEBUG_AI:
                 print(f"🧠 Language subconscious processing with {SUBCONSCIOUS_MODEL}")
                 print(f"🎭 Emotion: {self.current_emotion}")
+                
+                # Show psychological state if active
+                if psychological_context:
+                    print(f"🧬 Psychological state injected into prompt:")
+                    print(f"{psychological_context.strip()}")
+                
                 print(f"📝 Prompt being sent:\n{prompt}\n")
 
             # First awakening: acknowledge continuity if baseline exists
@@ -3286,10 +3338,25 @@ Keep brief (2 sentences). This consolidation is invisible background processing.
                 else:
                     person_pattern = f"\nPERSON TRACKING: Consistently {most_common_count} people present."
 
-        # Build compression prompt using VISUAL data (grounded by YOLO)
+        # Include psychological state for richer compression
+        psychological_summary = ""
+        desires = self.memory_ref.self_model.get('desires', [])
+        doubts = self.memory_ref.self_model.get('doubts', [])
+        identity_fragments = self.memory_ref.self_model.get('identity_fragments', [])
+        
+        if desires or doubts or identity_fragments:
+            psychological_summary = "\n\nPSYCHOLOGICAL STATE:"
+            if desires:
+                psychological_summary += f"\n- Desires: {', '.join(desires[-3:])}"
+            if doubts:
+                psychological_summary += f"\n- Uncertainties: {', '.join(doubts[-3:])}"
+            if identity_fragments:
+                psychological_summary += f"\n- Self-understanding: {identity_fragments[-1]}"
+
+        # Build compression prompt using VISUAL data (grounded by YOLO) + psychological insights
         compression_prompt = f"""Recent visual observations (what I actually saw):
 {visual_text}
-{person_pattern}
+{person_pattern}{psychological_summary}
 
 Current baseline: {self.baseline_context if self.baseline_context else "Nothing established yet"}
 
@@ -3312,6 +3379,7 @@ Updated baseline:"""
 
             if DEBUG_AI:
                 print(f"🗜️ Baseline updated: {self.baseline_context}")
+
     
     
     def _extract_mood_from_reflection(self, reflection):

@@ -134,7 +134,11 @@ class DirectAudioLipSync:
             on_start_callback: Called when jaw actually starts moving (audio playing)
             on_end_callback: Called when audio playback finishes
         """
-        if not self.enabled or not Path(wav_path).exists():
+        print(f"🔊 play_with_lipsync called: {wav_path}, callback={on_start_callback is not None}")
+        
+        # Always play audio, even if serial/jaw control isn't available
+        if not Path(wav_path).exists():
+            print(f"❌ WAV file not found: {wav_path}")
             return
 
         self.is_playing = True
@@ -169,26 +173,27 @@ class DirectAudioLipSync:
                 frames_played += len(data) // wf.getsampwidth() // wf.getnchannels()
                 self.current_playback_time = frames_played / framerate
 
-                # Analyze amplitude
+                # Analyze amplitude for jaw movement and callback timing
                 audio_array = np.frombuffer(data, dtype=np.int16)
                 if len(audio_array) > 0:
                     amplitude = np.sqrt(np.mean(np.abs(audio_array)**2))
                 else:
                     amplitude = 0
 
-                # Move jaw
-                jaw_angle = self._amplitude_to_angle(amplitude)
-                self._send_command(jaw_angle)
-
-                # Fire callback when jaw ACTUALLY moves (opens from closed)
-                # This is when sound is truly playing - the servo is responding!
-                if not callback_fired and jaw_angle > self.JAW_CLOSED + 5 and on_start_callback:
-                    print(f"🎤 JAW MOVED! Angle: {jaw_angle} (threshold: {self.JAW_CLOSED + 5})")
+                # Fire start callback when ACTUAL SPEECH begins (amplitude above threshold)
+                # This syncs subtitles with when voice actually starts, not just audio file
+                if not callback_fired and amplitude >= self.SILENCE_THRESHOLD and on_start_callback:
+                    print(f"🎤 Speech detected (amplitude: {amplitude:.0f}) - firing callback")
                     try:
                         on_start_callback()
                     except Exception as e:
                         print(f"Callback error: {e}")
                     callback_fired = True
+
+                # Move jaw (only if enabled)
+                if self.enabled:
+                    jaw_angle = self._amplitude_to_angle(amplitude)
+                    self._send_command(jaw_angle)
 
                 # Read next chunk
                 data = wf.readframes(chunk_size)
