@@ -128,8 +128,8 @@ synthesis_result = None
 
 for model in models_to_try:
     try:
-        print(f"\n🧠 Attempting synthesis with {model}...")
-        
+        print(f"\nAttempting synthesis with {model}...")
+
         # Use ollama API like personality.py does
         response = requests.post(
             "http://localhost:11434/api/generate",
@@ -144,37 +144,37 @@ for model in models_to_try:
             },
             timeout=60
         )
-        
+
         response.raise_for_status()
         result = response.json()
         synthesis_result = result.get('response', '')
-        
-        print(f"✅ Success with {model}!")
+
+        print(f"SUCCESS with {model}!")
         print("\n" + "=" * 80)
         print("SYNTHESIS RESULT:")
         print("=" * 80)
         print(synthesis_result)
         print("=" * 80)
-        
+
         # Parse the result to extract sections
-        print("\n📊 PARSED SECTIONS:")
+        print("\nPARSED SECTIONS:")
         print("=" * 80)
-        
+
         sections = synthesis_result.split('\n\n')
         for i, section in enumerate(sections):
             if section.strip():
                 print(f"\nSection {i+1}:")
                 print(section.strip())
                 print("-" * 40)
-        
+
         break
-        
+
     except Exception as e:
-        print(f"❌ {model} failed: {e}")
+        print(f"FAILED - {model}: {e}")
         continue
 
 if not synthesis_result:
-    print("\n❌ All models failed. Check ollama is running: ollama list")
+    print("\nAll models failed. Check ollama is running: ollama list")
 else:
     # Save result
     with open('deep_synthesis_result.txt', 'w', encoding='utf-8') as f:
@@ -182,10 +182,10 @@ else:
         f.write("=" * 80 + "\n\n")
         f.write(f"Model used: {model}\n\n")
         f.write(synthesis_result)
-    
-    print(f"\n💾 Result saved to: deep_synthesis_result.txt")
-    
-    print("\n🎯 NEXT STEPS:")
+
+    print(f"\nResult saved to: deep_synthesis_result.txt")
+
+    print("\nNEXT STEPS:")
     print("- Review the synthesis quality")
     print("- Check if identity confusion is resolved")
     print("- Verify worldview and existential stance make sense")
