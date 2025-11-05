@@ -69,12 +69,17 @@ class Camera:
             # Set resolution
             self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, CAMERA_WIDTH)
             self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, CAMERA_HEIGHT)
-            
+
+            # Additional settings for external camera stability
+            self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # Minimize buffering for fresh frames
+            self.cap.set(cv2.CAP_PROP_FPS, 30)  # Explicit FPS setting
+
             # Verify settings
             actual_width = self.cap.get(cv2.CAP_PROP_FRAME_WIDTH)
             actual_height = self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT)
-            
-            print(f"✅ Camera {CAMERA_INDEX} initialized: {int(actual_width)}x{int(actual_height)}")
+            actual_fps = self.cap.get(cv2.CAP_PROP_FPS)
+
+            print(f"✅ Camera {CAMERA_INDEX} initialized: {int(actual_width)}x{int(actual_height)} @ {int(actual_fps)}fps")
             
             # Warm up camera - discard first few frames for better quality
             # (First frames often dark/blurry as camera adjusts exposure/focus)
@@ -94,17 +99,29 @@ class Camera:
             return False
     
     def get_frame(self):
-        """Get current frame from camera"""
+        """Get current frame from camera with retry logic"""
         if not self.is_open or not self.cap:
             return None
-            
-        ret, frame = self.cap.read()
-        if ret:
-            return frame
-        else:
-            if DEBUG_CAMERA:
-                print("Failed to capture frame")
-            return None
+
+        # Try up to 3 times to get a valid frame (helps with unstable external cameras)
+        for attempt in range(3):
+            ret, frame = self.cap.read()
+            if ret and frame is not None:
+                # Validate frame isn't completely black/corrupt
+                if frame.mean() > 5:  # Not a black frame
+                    return frame
+                elif DEBUG_CAMERA and attempt == 0:
+                    print(f"⚠️ Got black frame (mean={frame.mean():.1f}), retrying...")
+            elif DEBUG_CAMERA and attempt == 0:
+                print("⚠️ Frame capture failed, retrying...")
+
+            # Brief delay before retry
+            if attempt < 2:
+                time.sleep(0.05)
+
+        if DEBUG_CAMERA:
+            print("❌ Failed to capture valid frame after 3 attempts")
+        return None
     
     def test_frame(self):
         """Get a frame and return basic statistics for debugging"""

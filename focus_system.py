@@ -51,32 +51,34 @@ class FocusEngine:
         self.session_start = time.time()
         self.total_observations = 0
         
-    def analyze_current_state(self, 
-                            recent_observations: List[str], 
+    def analyze_current_state(self,
+                            recent_observations: List[str],
                             mood_vector: Tuple[float, float, float],
                             beliefs_count: int,
-                            scene_changed: bool = False) -> Dict:
+                            scene_changed: bool = False,
+                            person_events: List[str] = None,
+                            activity_score: float = 0.0) -> Dict:
         """
         Analyze current consciousness state to determine optimal focus.
-        
+
         Returns comprehensive state analysis for intelligent focus selection.
         """
         current_time = time.time()
         self.total_observations += 1
         self.observation_timestamps.append(current_time)
-        
+
         # === TEMPORAL ANALYSIS ===
         session_duration = current_time - self.session_start
-        
+
         # Calculate static duration (how long since significant change)
         if scene_changed:
             self.last_significant_change = current_time
             self.static_duration = 0.0
         else:
             self.static_duration = current_time - self.last_significant_change
-            
+
         # === VISUAL NOVELTY ANALYSIS ===
-        visual_novelty = self._calculate_visual_novelty(recent_observations)
+        visual_novelty = self._calculate_visual_novelty(recent_observations, person_events, activity_score)
         
         # === EMOTIONAL STATE ANALYSIS ===
         self.mood_trajectory.append(mood_vector)
@@ -157,32 +159,49 @@ class FocusEngine:
         else:
             return self._focus_temporal(state_analysis, "deep_contemplation")
     
-    def _calculate_visual_novelty(self, recent_observations: List[str]) -> float:
-        """Calculate visual novelty based on observation patterns."""
+    def _calculate_visual_novelty(self, recent_observations: List[str], person_events: List[str] = None, activity_score: float = 0.0) -> float:
+        """Calculate visual novelty based on ACTUAL environmental changes + observation patterns."""
+
+        # === IMMEDIATE HIGH NOVELTY: Real environmental changes ===
+        if person_events:
+            # Someone arriving/leaving is ALWAYS highly novel
+            if any(event in ['person_arrived', 'person_left', 'person_returned'] for event in person_events):
+                return 1.0  # Maximum novelty - environment just changed!
+            # Person count change (multiple people entering/leaving)
+            if 'count_changed' in person_events:
+                return 0.9  # Very high novelty
+
+        # === HIGH ACTIVITY: Movement/gestures should trigger attention ===
+        if activity_score > 50:  # High movement detected
+            return 0.85  # Very high novelty - something is happening!
+        elif activity_score > 25:  # Moderate movement
+            return 0.6  # Noticeable novelty
+
+        # === FALLBACK: Text-based novelty for static scenes ===
         if len(recent_observations) < 2:
             return 1.0  # Everything is novel at first
-            
+
         # Simple similarity calculation - could be enhanced with embeddings
         latest = recent_observations[-1].lower()
         recent_patterns = [obs.lower() for obs in recent_observations[-4:-1]]
-        
+
         # Calculate overlap with recent observations
         latest_words = set(latest.split())
         similarities = []
-        
+
         for pattern in recent_patterns:
             pattern_words = set(pattern.split())
             if len(latest_words) > 0 and len(pattern_words) > 0:
                 overlap = len(latest_words.intersection(pattern_words))
                 similarity = overlap / len(latest_words.union(pattern_words))
                 similarities.append(similarity)
-        
+
         if similarities:
             avg_similarity = np.mean(similarities)
             novelty = 1.0 - avg_similarity
         else:
             novelty = 0.5
-            
+
         self.visual_repetition_score = 1.0 - novelty
         return max(0.0, min(1.0, novelty))
     

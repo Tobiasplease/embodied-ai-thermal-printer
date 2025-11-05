@@ -16,10 +16,17 @@ import cv2
 import time
 import signal
 import sys
+import io
 import traceback
 import threading
 import textwrap
+import queue
 from datetime import datetime
+
+# Fix Windows emoji encoding issues by forcing UTF-8
+if sys.platform == 'win32':
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
 
 from camera import Camera
 from personality import PersonalityAI
@@ -131,6 +138,51 @@ echo Print spooler cleared successfully!
         print(f"⚠️ Could not clear print queue: {e}")
         print("💡 Manual solution: Run as Administrator and execute:")
         print("   net stop spooler && del /q C:\\Windows\\System32\\spool\\PRINTERS\\*.* && net start spooler")
+
+class UrgentReactionQueue:
+    """Thread-safe queue for urgent reactions (person arrivals/departures)"""
+
+    def __init__(self):
+        self.queue = queue.Queue(maxsize=1)  # Only keep most urgent reaction
+        self.lock = threading.Lock()
+
+    def add_reaction(self, text, urgency, context=None):
+        """Add reaction, replacing existing if more urgent"""
+        with self.lock:
+            try:
+                # Try to get existing reaction
+                existing = self.queue.get_nowait()
+                # Put back the more urgent one
+                if urgency > existing['urgency']:
+                    self.queue.put({'text': text, 'urgency': urgency, 'context': context or {}})
+                else:
+                    self.queue.put(existing)  # Keep existing
+            except queue.Empty:
+                # No existing reaction - add this one
+                self.queue.put({'text': text, 'urgency': urgency, 'context': context or {}})
+
+    def get_if_urgent(self, threshold=0.6):
+        """Get reaction if urgency >= threshold, otherwise leave in queue"""
+        try:
+            with self.lock:
+                reaction = self.queue.get_nowait()
+                if reaction['urgency'] >= threshold:
+                    return reaction  # Remove from queue and return
+                else:
+                    self.queue.put(reaction)  # Put back - not urgent enough yet
+                    return None
+        except queue.Empty:
+            return None
+
+    def clear(self):
+        """Clear all queued reactions"""
+        with self.lock:
+            try:
+                while True:
+                    self.queue.get_nowait()
+            except queue.Empty:
+                pass
+
 class EmbodiedAI:
     """Main embodied AI system - clean single-threaded design"""
     
@@ -171,6 +223,10 @@ class EmbodiedAI:
         self.subtitle_lock = threading.Lock()
         self.caption_version = 0  # Track caption changes to prevent old chunks from speaking
         self.pending_caption = None  # Queue next caption to start after current chunk finishes
+
+        # URGENT REACTION QUEUE (thread-safe, for person arrivals/departures)
+        self.urgent_reaction_queue = UrgentReactionQueue()
+        self.last_urgent_reaction_time = 0  # Cooldown to prevent spamming
 
         # Silence period tracking
         self.in_silence_period = False
@@ -375,20 +431,59 @@ class EmbodiedAI:
                 if self.frame_count % 5 == 0:
                     self._detect_face_movement(frame)
 
+                # === PERSON TRACKING IN MAIN LOOP (for instant reactivity) ===
+                person_events = []
+                presence_state = None
+                if self.personality and hasattr(self.personality, 'person_tracker'):
+                    person_data = self.personality.person_tracker.analyze_frame(frame)
+                    person_events = person_data.get('events', [])
+                    presence_state = person_data.get('presence_state', None)
+
+                    # Update personality tracking data for visualization
+                    self.personality.last_person_positions = person_data.get('positions', [])
+                    self.personality.last_detection_frame_size = (frame.shape[1], frame.shape[0])
+
+                    # GENERATE AND QUEUE URGENT REACTIONS based on presence state
+                    if presence_state:
+                        # Only queue reactions if enough time has passed (prevent spam)
+                        time_since_last_reaction = current_time - self.last_urgent_reaction_time
+
+                        if presence_state.urgency_score > 0.6 and time_since_last_reaction > 2.0:
+                            reaction = self._generate_contextual_reaction(presence_state)
+                            if reaction:
+                                self.urgent_reaction_queue.add_reaction(
+                                    reaction,
+                                    presence_state.urgency_score,
+                                    context={'presence_duration': presence_state.presence_duration}
+                                )
+                                self.last_urgent_reaction_time = current_time
+                                if DEBUG_AI:
+                                    print(f"🎯 Queued urgent reaction (urgency {presence_state.urgency_score:.2f}): {reaction[:40]}...")
+
                 # Calculate dynamic interval based on scene activity
                 self.current_ai_interval = self._calculate_dynamic_interval()
 
+                # IMMEDIATE AI trigger on person arrival/departure (bypass interval)
+                # BUT reaction is queued, not forced immediately
+                force_ai_now = len(person_events) > 0
+
                 # AI processing in SEPARATE THREAD with dynamic interval
-                if current_time - self.last_ai_process_time >= self.current_ai_interval:
+                should_process_ai = (current_time - self.last_ai_process_time >= self.current_ai_interval) or force_ai_now
+
+                if should_process_ai:
                     # Only start new AI thread if previous one is complete
                     if self.ai_processing_lock.acquire(blocking=False):  # Non-blocking acquire
                         if DEBUG_AI:
-                            print(f"🧠 Starting AI thread at frame {self.frame_count}")
-                        
+                            if force_ai_now:
+                                print(f"⚡ PERSON EVENT - forcing immediate AI at frame {self.frame_count}")
+                            else:
+                                print(f"🧠 Starting AI thread at frame {self.frame_count}")
+
                         # Start daemon thread for AI processing (machine.py pattern)
+                        # Pass person_events for context-aware instant captions
                         ai_thread = threading.Thread(
                             target=self._ai_processing_thread,
-                            args=(frame.copy(), current_time),
+                            args=(frame.copy(), current_time, person_events),
                             daemon=True
                         )
                         ai_thread.start()
@@ -399,7 +494,10 @@ class EmbodiedAI:
                 if SHOW_CAMERA_PREVIEW:
                     # Resize frame for preview (matching machine.py)
                     display_frame = cv2.resize(frame, (PREVIEW_WIDTH, PREVIEW_HEIGHT))
-                    
+
+                    # Draw person detection boxes
+                    display_frame = self._draw_person_detections(display_frame)
+
                     # Apply live captioning subtitle system
                     if hasattr(self, 'current_subtitle') and self.current_subtitle:
                         display_frame = self._draw_live_caption_overlay(display_frame)
@@ -436,12 +534,16 @@ class EmbodiedAI:
             self.shutdown()
     
 
-    def _ai_processing_thread(self, frame, timestamp):
+    def _ai_processing_thread(self, frame, timestamp, person_events=None):
         """AI processing in separate thread (EXACT machine.py pattern)"""
         try:
             if DEBUG_AI:
                 print(f"🧠 AI thread processing frame at {timestamp}")
-            
+
+            # Pass person events to personality for instant captions
+            if person_events:
+                self.personality.pending_person_events = person_events
+
             # Call AI (this is the slow blocking operation)
             # Simple consciousness processing
             response = self.personality.analyze_image(frame)
@@ -454,7 +556,7 @@ class EmbodiedAI:
             
             if response:
                 if DEBUG_AI:
-                    print(f"🎯 AI returned response: {response[:100]}{'...' if len(response) > 100 else ''}")
+                    print(f"🎯 AI returned response: {response}")
                 
                 # Clean caption - remove debug markers and system text
                 import re
@@ -481,6 +583,10 @@ class EmbodiedAI:
                 
                 # Thread-safe live captioning subtitle update
                 with self.subtitle_lock:
+                    # INCREMENT VERSION - this invalidates all old chunk callbacks!
+                    # Old chunks will check version and abort their callbacks
+                    self.caption_version += 1
+
                     self.current_subtitle = clean_caption
 
                     # NOTE: Don't send to projector here - it will be updated per chunk
@@ -488,6 +594,12 @@ class EmbodiedAI:
 
                     # Create sentence-based chunks (like live captioning)
                     self.subtitle_chunks = self._create_smart_chunks(clean_caption)
+
+                    # DEBUG: Print all chunks that will be spoken
+                    if DEBUG_AI:
+                        print(f"📋 Created {len(self.subtitle_chunks)} chunks:")
+                        for i, chunk in enumerate(self.subtitle_chunks):
+                            print(f"   Chunk {i}: '{chunk}'")
 
                     # Initialize ready flags - all False (waiting for jaw movement)
                     self.chunk_ready_flags = [False] * len(self.subtitle_chunks)
@@ -521,24 +633,25 @@ class EmbodiedAI:
 
                             # Callback to mark chunk 0 as ready when jaw moves
                             def on_jaw_movement_chunk_0():
-                                if self.caption_version != chunk_0_version:
-                                    return  # Old caption - ignore
-                                print(f"📢 Chunk 0 jaw moved - marking ready!")
-                                with self.subtitle_lock:
-                                    if len(self.chunk_ready_flags) > 0:
-                                        self.chunk_ready_flags[0] = True
-                                        # Reset timer NOW (when jaw actually moves)
-                                        self.last_chunk_change_time = time.time()
+                                # Always update projector when jaw moves (show what's actually being spoken)
+                                # Even if caption version changed, the TTS is playing so user should see it
+                                print(f"📢 Chunk 0 jaw moved!")
+                                if self.subtitle_projector:
+                                    try:
+                                        self.subtitle_projector.display(chunk_0_text)
+                                        if DEBUG_AI:
+                                            print(f"📽️ Projector: '{chunk_0_text[:50]}...'")
+                                    except Exception as e:
+                                        if DEBUG_AI:
+                                            print(f"⚠️ Projector update error: {e}")
 
-                                        # Update projector with EXACT text we're speaking
-                                        if self.subtitle_projector:
-                                            try:
-                                                self.subtitle_projector.display(chunk_0_text)
-                                                if DEBUG_AI:
-                                                    print(f"📽️ Projector: '{chunk_0_text[:50]}...'")
-                                            except Exception as e:
-                                                if DEBUG_AI:
-                                                    print(f"⚠️ Projector update error: {e}")
+                                # Only update internal state if this is still the current caption
+                                if self.caption_version == chunk_0_version:
+                                    with self.subtitle_lock:
+                                        if len(self.chunk_ready_flags) > 0:
+                                            self.chunk_ready_flags[0] = True
+                                            # Reset timer NOW (when jaw actually moves)
+                                            self.last_chunk_change_time = time.time()
 
                             # Callback when chunk 0 finishes - speak chunk 1
                             def on_chunk_0_finished():
@@ -628,28 +741,46 @@ class EmbodiedAI:
 
         # Callbacks for this chunk
         def on_jaw_movement():
-            if self.caption_version != expected_version:
-                return  # Old caption - ignore
-            print(f"\n📢 Chunk {next_idx} jaw moved - marking ready!")
-            with self.subtitle_lock:
-                if next_idx < len(self.chunk_ready_flags):
-                    self.chunk_ready_flags[next_idx] = True
-                    self.last_chunk_change_time = time.time()
+            # Always update projector when jaw moves (show what's actually being spoken)
+            # Even if caption version changed, the TTS is playing so user should see it
+            print(f"\n📢 Chunk {next_idx} jaw moved!")
+            if self.subtitle_projector:
+                try:
+                    self.subtitle_projector.display(chunk_text_for_callback)
+                    if DEBUG_AI:
+                        print(f"📽️ Projector: '{chunk_text_for_callback[:50]}...'")
+                except Exception as e:
+                    if DEBUG_AI:
+                        print(f"⚠️ Projector update error: {e}")
 
-                    # Update projector with the EXACT text we're speaking
-                    if self.subtitle_projector:
-                        try:
-                            self.subtitle_projector.display(chunk_text_for_callback)
-                            if DEBUG_AI:
-                                print(f"📽️ Projector: '{chunk_text_for_callback[:50]}...'")
-                        except Exception as e:
-                            if DEBUG_AI:
-                                print(f"⚠️ Projector update error: {e}")
+            # Only update internal state if this is still the current caption
+            if self.caption_version == expected_version:
+                with self.subtitle_lock:
+                    if next_idx < len(self.chunk_ready_flags):
+                        self.chunk_ready_flags[next_idx] = True
+                        self.last_chunk_change_time = time.time()
 
         def on_finished():
             if self.caption_version != expected_version:
                 return  # Old caption - ignore
             print(f"\n✅ Chunk {next_idx} finished!")
+
+            # CHECK FOR URGENT REACTIONS BEFORE CONTINUING CHUNK CHAIN
+            urgent = self.urgent_reaction_queue.get_if_urgent(threshold=0.6)
+            if urgent:
+                # URGENT REACTION - interrupt caption chain
+                if DEBUG_AI:
+                    print(f"⚡ URGENT REACTION interrupting (urgency {urgent['urgency']:.2f}): {urgent['text']}")
+
+                # Increment version to abort old caption chain
+                with self.subtitle_lock:
+                    self.caption_version += 1
+
+                # Speak urgent reaction immediately
+                self._speak_urgent_reaction(urgent['text'])
+                return  # DON'T continue old caption chain
+
+            # No urgent reaction - continue normal chunk chain
             self._speak_next_chunk(next_idx, expected_version)  # Recursive chain!
 
         # Speak it
@@ -689,7 +820,41 @@ class EmbodiedAI:
         # Start speaking in background thread
         thread = threading.Thread(target=speak_worker, daemon=True)
         thread.start()
-    
+
+    def _speak_urgent_reaction(self, text):
+        """Speak urgent reaction immediately (bypasses chunking, simple TTS)"""
+        if not self.voice_system or not text:
+            return
+
+        if DEBUG_AI:
+            print(f"🔊 Speaking urgent reaction: {text}")
+
+        # Print to console
+        timestamp_str = time.strftime("%H:%M:%S")
+        print(f"\n[{timestamp_str}] ⚡ {text}")
+
+        # Update projector
+        if self.subtitle_projector:
+            try:
+                self.subtitle_projector.display(text)
+            except Exception as e:
+                if DEBUG_AI:
+                    print(f"⚠️ Projector update error: {e}")
+
+        # Speak it (no callbacks, simple immediate speech)
+        def speak_worker():
+            try:
+                # Get emotional voice variations
+                emotion_speed, emotion_pitch = self._get_emotional_voice_params()
+                self.voice_system.speak(text, speed=emotion_speed, pitch=emotion_pitch)
+            except Exception as e:
+                if DEBUG_AI:
+                    print(f"⚠️ TTS error: {e}")
+
+        # Start speaking in background thread
+        thread = threading.Thread(target=speak_worker, daemon=True)
+        thread.start()
+
     def _create_smart_chunks(self, text):
         """Break text into sentence-based chunks for live captioning flow"""
         import re
@@ -704,27 +869,27 @@ class EmbodiedAI:
             if len(sentence.split()) <= 10:
                 chunks.append(sentence)
             else:
-                # Split long sentences at natural breaks - use finditer to preserve text
-                # Look for commas, semicolons, or conjunctions
-                split_pattern = r'[,;]|\s+(?:and|but|or|so|yet|for)\s+'
+                # Split long sentences at natural breaks - KEEP PUNCTUATION for clarity
+                # Look for commas, semicolons (but keep them with the preceding text)
+                split_pattern = r'[,;]\s+'
                 last_end = 0
                 parts = []
-                
+
                 for match in re.finditer(split_pattern, sentence):
-                    # Get text before the delimiter
-                    part = sentence[last_end:match.start()].strip()
-                    if part:
+                    # Get text INCLUDING the delimiter (comma/semicolon)
+                    part = sentence[last_end:match.start() + 1].strip()  # +1 to include punctuation
+                    if part and len(part.split()) >= 3:  # Only split if chunk has at least 3 words
                         parts.append(part)
-                    last_end = match.end()
-                
+                        last_end = match.end()
+
                 # Add remaining text after last delimiter
                 if last_end < len(sentence):
                     part = sentence[last_end:].strip()
                     if part:
                         parts.append(part)
-                
+
                 # If we got parts, use them; otherwise keep whole sentence
-                if parts:
+                if parts and len(parts) > 1:  # Only split if we got multiple meaningful chunks
                     chunks.extend(parts)
                 else:
                     chunks.append(sentence)
@@ -851,6 +1016,83 @@ class EmbodiedAI:
         
         return frame
 
+    def _draw_person_detections(self, frame):
+        """Draw person detection bounding boxes on the frame"""
+        try:
+            if not self.personality or not hasattr(self.personality, 'last_person_positions'):
+                return frame
+
+            # Get the original frame dimensions and display frame dimensions
+            display_height, display_width = frame.shape[:2]
+
+            # Get person positions from personality (these are in original frame coordinates)
+            person_positions = self.personality.last_person_positions
+
+            if not person_positions:
+                return frame
+
+            # Get actual detection frame size from personality
+            original_width, original_height = self.personality.last_detection_frame_size
+
+            # Calculate scaling factors
+            scale_x = display_width / original_width
+            scale_y = display_height / original_height
+
+            # Draw each person detection
+            for person in person_positions:
+                bbox = person['bbox']  # [x1, y1, x2, y2] in original coordinates
+                conf = person['confidence']
+
+                # Scale bounding box to display coordinates
+                x1 = int(bbox[0] * scale_x)
+                y1 = int(bbox[1] * scale_y)
+                x2 = int(bbox[2] * scale_x)
+                y2 = int(bbox[3] * scale_y)
+
+                # Draw bounding box (green)
+                cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+
+                # Draw confidence label
+                label = f"Person {conf:.2f}"
+                label_size = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)[0]
+
+                # Draw label background
+                cv2.rectangle(frame,
+                            (x1, y1 - label_size[1] - 4),
+                            (x1 + label_size[0], y1),
+                            (0, 255, 0), -1)
+
+                # Draw label text
+                cv2.putText(frame, label, (x1, y1 - 2),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1)
+
+            # Draw person count overlay in top-right corner
+            person_count = len(person_positions)
+            if person_count > 0:
+                count_text = f"People: {person_count}"
+                text_size = cv2.getTextSize(count_text, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)[0]
+
+                # Position in top-right with margin
+                text_x = display_width - text_size[0] - 10
+                text_y = text_size[1] + 10
+
+                # Draw background
+                cv2.rectangle(frame,
+                            (text_x - 5, text_y - text_size[1] - 5),
+                            (text_x + text_size[0] + 5, text_y + 5),
+                            (0, 0, 0), -1)
+
+                # Draw text
+                cv2.putText(frame, count_text, (text_x, text_y),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+
+            return frame
+
+        except Exception as e:
+            if DEBUG_CAMERA:
+                print(f"⚠️ Person detection drawing error: {e}")
+            return frame
+
     def _update_motor_control(self, current_time):
         """Update motor control based on personality state"""
         try:
@@ -906,6 +1148,45 @@ class EmbodiedAI:
                 return False
         except:
             return False
+
+    def _generate_contextual_reaction(self, presence_state):
+        """Generate contextual reaction based on presence state (not generic!)"""
+        import random
+
+        # ARRIVAL reactions (contextual, not generic "someone's here")
+        if presence_state.just_arrived:
+            if presence_state.presence_duration < 1.0:
+                # Just arrived this moment
+                return random.choice([
+                    "Oh",
+                    "Someone's here",
+                    "Hello",
+                    "Mm"
+                ])
+            else:
+                # Already acknowledged - don't repeat
+                return None
+
+        # DEPARTURE reactions
+        elif presence_state.just_left:
+            # Check how long they were here before leaving
+            # (presence_duration is 0 now, but we can infer from context)
+            return random.choice([
+                "They left",
+                "Alone now",
+                "Gone",
+                "Quiet now"
+            ])
+
+        # MOVEMENT reactions (lower urgency)
+        elif presence_state.activity_description in ["moving across the space", "moving around"]:
+            if presence_state.last_activity_time < 1.0:  # Just started moving
+                return random.choice([
+                    "Moving",
+                    "They're moving"
+                ])
+
+        return None  # No reaction needed
 
     def _calculate_dynamic_interval(self):
         """Calculate AI process interval based on activity detection"""

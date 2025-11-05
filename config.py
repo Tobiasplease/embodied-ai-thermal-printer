@@ -3,7 +3,7 @@
 
 # Camera Settings
 CAMERA_INDEX = 0  # 0 = built-in laptop camera, 1 = external USB webcam
-CAMERA_WIDTH = 1280  # Higher resolution for better AI vision
+CAMERA_WIDTH = 1280  # High resolution for built-in camera
 CAMERA_HEIGHT = 720
 CAMERA_FPS = 30
 
@@ -41,6 +41,12 @@ OLLAMA_URL = "http://localhost:11434"
 # OLLAMA_MODEL = "moondream:latest"  # 1.7GB vision - fast
 # SUBCONSCIOUS_MODEL = "llama3.2:3b"  # 2.0GB language - NOT DOWNLOADED YET
 
+# === ARCHITECTURE MODE TOGGLE ===
+# Set to True to use single multimodal model for both vision + language
+# Set to False to use dual-model architecture (separate vision + language)
+SINGLE_MODEL_MODE = True  # ⭐ Change this line to switch modes
+
+# === DUAL-MODEL MODE (when SINGLE_MODEL_MODE = False) ===
 # Option 4: ULTRA LIGHT (fastest) - 3.5GB total ⭐ ACTIVE
 OLLAMA_MODEL = "moondream:latest"  # 1.7GB vision - fast, occasional glitches
 SUBCONSCIOUS_MODEL = "smollm2:1.7b"  # 1.8GB language - very fast
@@ -48,6 +54,11 @@ SUBCONSCIOUS_MODEL = "smollm2:1.7b"  # 1.8GB language - very fast
 # Option 8: MINICPM-V + SMOLLM2 (better vision, fast language) - 7.3GB total (too slow)
 # OLLAMA_MODEL = "minicpm-v:8b"  # 5.5GB vision - more stable than moondream
 # SUBCONSCIOUS_MODEL = "smollm2:1.7b"  # 1.8GB language - very fast
+
+# === SINGLE-MODEL MODE (when SINGLE_MODEL_MODE = True) ===
+# Use one multimodal model for both vision + language
+# This model is ONLY used when SINGLE_MODEL_MODE = True
+SINGLE_MULTIMODAL_MODEL = "llava:7b-v1.6-mistral-q5_1"  # 6.1GB - already downloaded
 
 AI_PROCESS_INTERVAL = 8.0  # seconds between AI processing - slower for stability
 USE_SOPHISTICATED_PROMPTS = False  # Testing hybrid focus-aware legacy system
