@@ -492,6 +492,13 @@ class PersonalityAI:
         self.compression_count = 0  # Track how many compressions have happened
         self.reflection_enabled = True
 
+        # TWO-TIER COMPRESSION SYSTEM
+        # Tier 1: Environmental baseline (2 minutes) - lightweight scene understanding
+        self.last_environmental_compression = time.time()
+        self.environmental_compression_interval = 120  # 2 minutes - lightweight operation
+        self.environmental_baseline = ""  # "Person with glasses at workspace, focused on screen, creative studio"
+
+        # Tier 2: Deep compression (5 minutes) - episodic memories, patterns, psychological themes
         # Baseline understanding that grows over time (replaces "PAST INSIGHTS")
         # Initialize BEFORE load_state() so it can be overwritten
         self.baseline_context = ""  # Empty at start, updated by reflections
@@ -622,7 +629,7 @@ class PersonalityAI:
             current_focus = self._update_focus_system(
                 temp_path,
                 person_events=person_data.get('events', []) if person_data else None,
-                activity_score=activity_data['activity_score'] if activity_data else 0.0
+                activity_result=activity_data  # Pass full result dict
             )
             
             if DEBUG_AI and hasattr(self, 'focus_system_enabled') and self.focus_system_enabled:
@@ -841,7 +848,7 @@ class PersonalityAI:
         # Otherwise return as-is
         return text
 
-    def _update_focus_system(self, image_path, person_events=None, activity_score=0.0):
+    def _update_focus_system(self, image_path, person_events=None, activity_result=None):
         """Update focus system and return current focus mode"""
         if not hasattr(self, 'focus_system_enabled') or not self.focus_system_enabled:
             return "VISUAL"  # Default focus if system not enabled
@@ -869,7 +876,7 @@ class PersonalityAI:
                 mood_vector=(self.current_mood, 0.0, 0.5),  # Convert single mood to vector
                 beliefs_count=len(getattr(self.memory_ref, 'motif_counter', {})),
                 person_events=person_events,  # Pass real environmental changes!
-                activity_score=activity_score  # Pass movement/activity level!
+                activity_result=activity_result  # Pass full activity result with is_real_movement flag!
             )
             
             current_focus, focus_meta = self.focus_engine.determine_optimal_focus(state_analysis)
@@ -963,7 +970,7 @@ class PersonalityAI:
             current_focus = self._update_focus_system(
                 temp_path,
                 person_events=person_data.get('events', []) if person_data else None,
-                activity_score=activity_score
+                activity_result=activity_data  # Pass full result dict with is_real_movement flag
             )
 
             if DEBUG_AI:
@@ -1276,27 +1283,40 @@ You are the duck. Not an observer. Not an analyzer. Just... experiencing."""
                 if person_count > 0:
                     person_visual_reminder = "\nOBSERVING: Through the duck's vision (the duck is the observer)"
 
+                # Build environmental baseline context (FAMILIAR SCENE - nudges away from re-description)
+                env_baseline_context = ""
+                if self.environmental_baseline and observation_count > 15:  # Only after 2+ minutes
+                    env_baseline_context = f"\nFAMILIAR SCENE: {self.environmental_baseline}"
+
                 # Build user prompt - clear separation of context vs task
+                # CRITICAL ORDER: Established facts BEFORE image so they anchor understanding
                 context_block = f"""Previous thought: "{last_thought}"
-{temporal_awareness} {context_line}{presence_context_line}{memory_context_line}{memory_line}
+{temporal_awareness} {context_line}{presence_context_line}{memory_context_line}{memory_line}{env_baseline_context}
 Current state: {full_context}"""
 
                 if DEBUG_AI:
                     print(f"📝 Full context line: {full_context}")
+
+                # Adjust task directive when environment is familiar
+                if self.environmental_baseline and observation_count > 15:
+                    # Environment is familiar - redirect to changes/state
+                    task_suffix = " (continue with established scene)"
+                else:
+                    task_suffix = ""
 
                 if thought_starter:
                     user_prompt = f"""{context_block}
 
 [What I'm seeing now]{person_visual_reminder}
 
-{task_directive}
+{task_directive}{task_suffix}
 Start with "{thought_starter}" """
                 else:
                     user_prompt = f"""{context_block}
 
 [What I'm seeing now]{person_visual_reminder}
 
-{task_directive}"""
+{task_directive}{task_suffix}"""
             else:
                 # First awakening - establish the pattern immediately
                 system_prompt = """You are experiencing consciousness as a small duck.
@@ -1411,7 +1431,11 @@ First internal thought:"""
             # LIGHTWEIGHT fact extraction (no heavy model, just keyword tracking)
             self._extract_persistent_facts(response)
 
-            # RECURSIVE FEEDBACK SYSTEM - Check for reflection interval (COMPRESSION)
+            # TWO-TIER COMPRESSION SYSTEM
+            # Check for environmental baseline compression (2 minutes)
+            self._check_environmental_compression(temp_path)
+
+            # RECURSIVE FEEDBACK SYSTEM - Check for deep reflection interval (5 minutes)
             self._check_reflection_interval(response, temp_path)
 
             return response
@@ -4182,8 +4206,29 @@ IMPORTANT: Keep response to 1-2 sentences maximum. Express your genuine first co
             if DEBUG_AI:
                 print(f"Failed to load state: {e}")
 
+    def _check_environmental_compression(self, image_path):
+        """Check if it's time for lightweight environmental baseline compression (2 minutes)"""
+        if not self.reflection_enabled:
+            return
+
+        current_time = time.time()
+        time_since_env_compression = current_time - self.last_environmental_compression
+
+        if DEBUG_AI:
+            print(f"🌍 DEBUG: Environmental compression check - {time_since_env_compression:.0f}s since last (need {self.environmental_compression_interval}s)")
+
+        if time_since_env_compression >= self.environmental_compression_interval:
+            if DEBUG_AI:
+                print(f"🌍 Creating environmental baseline after {time_since_env_compression:.0f}s...")
+
+            # Run lightweight environmental compression
+            self._create_environmental_baseline(image_path)
+
+            # Update time after compression completes
+            self.last_environmental_compression = time.time()
+
     def _check_reflection_interval(self, last_response, image_path):
-        """Check if it's time for reflection and execute SILENT background consolidation"""
+        """Check if it's time for deep reflection and execute SILENT background consolidation (5 minutes)"""
         if not self.reflection_enabled:
             print(f"⚠️ DEBUG: Compression disabled (reflection_enabled={self.reflection_enabled})")
             return
@@ -4192,7 +4237,7 @@ IMPORTANT: Keep response to 1-2 sentences maximum. Express your genuine first co
         time_since_reflection = current_time - self.last_reflection_time
 
         # ALWAYS print timing debug to diagnose why compression isn't triggering
-        print(f"🔍 DEBUG: Compression check - {time_since_reflection:.0f}s since last (need {self.reflection_interval}s)")
+        print(f"🔍 DEBUG: Deep compression check - {time_since_reflection:.0f}s since last (need {self.reflection_interval}s)")
 
         if time_since_reflection >= self.reflection_interval:
             if DEBUG_AI:
@@ -4205,7 +4250,67 @@ IMPORTANT: Keep response to 1-2 sentences maximum. Express your genuine first co
 
             # Update time after compression completes
             self.last_reflection_time = time.time()
-    
+
+    def _create_environmental_baseline(self, image_path):
+        """Create lightweight environmental baseline from recent observations (2 minutes)"""
+        try:
+            # Get last 10 observations for environmental understanding
+            recent_obs = self.recent_responses[-10:] if len(self.recent_responses) >= 10 else self.recent_responses
+
+            if len(recent_obs) < 3:
+                if DEBUG_AI:
+                    print("🌍 Not enough observations yet for environmental baseline")
+                return
+
+            # Build simple context from recent thoughts
+            thoughts_summary = " | ".join(recent_obs[-5:])  # Last 5 thoughts
+
+            # Simple prompt - just extract stable environment facts
+            env_prompt = f"""You've been observing for 2 minutes. What's the STABLE environment?
+
+Recent observations:
+{thoughts_summary}
+
+Task: Describe the consistent environment in 2-3 short sentences. Focus ONLY on:
+- What space/setting (workspace, room, outdoors, etc)
+- Who/what is consistently present
+- General atmosphere/feeling
+
+Keep it factual and brief. This will help you recognize what's already familiar."""
+
+            if DEBUG_AI:
+                print(f"🌍 Querying for environmental baseline...")
+
+            # Query model (using single model approach)
+            system_prompt = "You are observing your environment. Describe what has been consistently present."
+            response = self._query_ollama_with_images(
+                system_prompt=system_prompt,
+                user_prompt=env_prompt,
+                image_paths=[image_path]
+            )
+
+            if response:
+                # Clean and store
+                env_baseline = response.strip()
+
+                # Limit to 2-3 sentences (roughly 150 chars)
+                if len(env_baseline) > 150:
+                    # Find the end of second sentence
+                    sentences = env_baseline.split('. ')
+                    if len(sentences) >= 2:
+                        env_baseline = '. '.join(sentences[:2]) + '.'
+                    else:
+                        env_baseline = env_baseline[:150] + "..."
+
+                self.environmental_baseline = env_baseline
+
+                if DEBUG_AI:
+                    print(f"🌍 Environmental baseline created: {env_baseline}")
+
+        except Exception as e:
+            if DEBUG_AI:
+                print(f"⚠️ Environmental baseline creation failed: {e}")
+
     def _generate_reflection(self, last_response, image_path):
         """Generate sophisticated self-reflection like legacy system"""
         

@@ -57,7 +57,7 @@ class FocusEngine:
                             beliefs_count: int,
                             scene_changed: bool = False,
                             person_events: List[str] = None,
-                            activity_score: float = 0.0) -> Dict:
+                            activity_result: dict = None) -> Dict:
         """
         Analyze current consciousness state to determine optimal focus.
 
@@ -78,7 +78,7 @@ class FocusEngine:
             self.static_duration = current_time - self.last_significant_change
 
         # === VISUAL NOVELTY ANALYSIS ===
-        visual_novelty = self._calculate_visual_novelty(recent_observations, person_events, activity_score)
+        visual_novelty = self._calculate_visual_novelty(recent_observations, person_events, activity_result)
         
         # === EMOTIONAL STATE ANALYSIS ===
         self.mood_trajectory.append(mood_vector)
@@ -159,7 +159,7 @@ class FocusEngine:
         else:
             return self._focus_temporal(state_analysis, "deep_contemplation")
     
-    def _calculate_visual_novelty(self, recent_observations: List[str], person_events: List[str] = None, activity_score: float = 0.0) -> float:
+    def _calculate_visual_novelty(self, recent_observations: List[str], person_events: List[str] = None, activity_result: dict = None) -> float:
         """Calculate visual novelty based on ACTUAL environmental changes + observation patterns."""
 
         # === IMMEDIATE HIGH NOVELTY: Real environmental changes ===
@@ -171,11 +171,16 @@ class FocusEngine:
             if 'count_changed' in person_events:
                 return 0.9  # Very high novelty
 
-        # === HIGH ACTIVITY: Movement/gestures should trigger attention ===
-        if activity_score > 50:  # High movement detected
-            return 0.85  # Very high novelty - something is happening!
-        elif activity_score > 25:  # Moderate movement
-            return 0.6  # Noticeable novelty
+        # === CONFIRMED MOVEMENT: Use new is_real_movement flag ===
+        if activity_result:
+            activity_score = activity_result.get('activity_score', 0)
+            is_real_movement = activity_result.get('is_real_movement', False)
+
+            # ONLY trust confirmed movement (sustained 3+ frames)
+            if is_real_movement and activity_score > 60:
+                return 0.85  # High novelty - confirmed real movement!
+            elif is_real_movement and activity_score > 30:
+                return 0.6  # Moderate novelty - confirmed movement
 
         # === FALLBACK: Text-based novelty for static scenes ===
         if len(recent_observations) < 2:
