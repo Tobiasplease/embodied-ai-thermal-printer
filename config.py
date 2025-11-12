@@ -2,7 +2,7 @@
 # Simple, single-source configuration
 
 # Camera Settings
-CAMERA_INDEX = 0  # 0 = built-in laptop camera, 1 = external USB webcam
+CAMERA_INDEX = 1  # 0 = built-in laptop camera, 1 = external USB webcam
 CAMERA_WIDTH = 1280  # High resolution for built-in camera
 CAMERA_HEIGHT = 720
 CAMERA_FPS = 30
@@ -44,7 +44,7 @@ OLLAMA_URL = "http://localhost:11434"
 # === ARCHITECTURE MODE TOGGLE ===
 # Set to True to use single multimodal model for both vision + language
 # Set to False to use dual-model architecture (separate vision + language)
-SINGLE_MODEL_MODE = True  # ⭐ Change this line to switch modes
+SINGLE_MODEL_MODE = True  # Single multimodal model (LLaVA)
 
 # === DUAL-MODEL MODE (when SINGLE_MODEL_MODE = False) ===
 # Option 4: ULTRA LIGHT (fastest) - 3.5GB total ⭐ ACTIVE
@@ -109,8 +109,13 @@ VOICE_INTERVAL = 30  # Speak every N seconds (if not speaking all thoughts)
 
 # Lip Sync Settings (servo jaw control)
 LIPSYNC_ENABLED = True  # Enable servo jaw lip sync
-LIPSYNC_PORT = "COM3"  # Arduino serial port
+LIPSYNC_PORT = "COM20"  # Arduino serial port (duck)
 LIPSYNC_BAUD = 9600  # Serial baud rate
+
+# Lightbulb Settings (synchronized with TTS audio/jaw movement)
+LIGHTBULB_ENABLED = False  # Enable lightbulb that fluctuates with speech (disabled until dimmable bulb found)
+LIGHTBULB_PORT = "COM21"  # Separate Arduino for lightbulb control
+LIGHTBULB_BAUD = 9600  # Serial baud rate
 
 # Camera Preview Settings
 SHOW_CAMERA_PREVIEW = True

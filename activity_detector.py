@@ -91,7 +91,10 @@ class ActivityDetector:
 
             # CALIBRATION PHASE (first 30 frames to learn camera noise)
             if not self.is_calibrated:
-                if len(self.activity_history) < self.calibration_frames:
+                current_len = len(self.activity_history)
+                print(f"🔧 DEBUG: Calibration progress: {current_len}/{self.calibration_frames} frames (magnitude: {avg_magnitude:.3f})")
+
+                if current_len < self.calibration_frames:
                     # Still collecting calibration data
                     self.prev_gray = gray
                     return {
@@ -106,12 +109,14 @@ class ActivityDetector:
                     }
                 else:
                     # Enough data - calibrate NOW and fall through to detection
+                    print(f"🔧 DEBUG: Reached {current_len} frames, starting calibration...")
                     self._calibrate_baseline()
                     self.is_calibrated = True
-                    print(f"📊 Activity baseline calibrated:")
+                    print(f"✅ Activity baseline calibrated:")
                     print(f"   Median: {self.baseline_activity:.3f}")
                     print(f"   Std Dev: {self.baseline_std:.3f}")
                     print(f"   Noise Floor: {self.noise_floor:.3f}")
+                    print(f"🔧 DEBUG: is_calibrated flag now = {self.is_calibrated}")
                     # Fall through to detection phase below
 
             # DETECTION PHASE (after calibration)
@@ -122,7 +127,10 @@ class ActivityDetector:
             # MOVEMENT DETECTION: Require 3+ std devs sustained for 3 frames
             if deviation_in_stds > 3.0:
                 self.high_activity_streak += 1
+                print(f"🔧 DEBUG: High deviation detected ({deviation_in_stds:.2f} stds), streak: {self.high_activity_streak}/{self.required_streak}")
             else:
+                if self.high_activity_streak > 0:
+                    print(f"🔧 DEBUG: Streak broken (deviation: {deviation_in_stds:.2f} stds)")
                 self.high_activity_streak = 0  # Reset streak
 
             # Confirm real movement only if sustained
@@ -132,6 +140,7 @@ class ActivityDetector:
             if is_real_movement:
                 # Confirmed movement - scale from 50-100 based on intensity
                 activity_score = min(100, 50 + (deviation_in_stds - 3.0) * 20)
+                print(f"✅ REAL MOVEMENT: Score {activity_score:.1f}, deviation: {deviation_in_stds:.2f} stds")
             elif deviation_in_stds > 1.5:
                 # Possible movement but not sustained - cautious score
                 activity_score = 15 + min(20, (deviation_in_stds - 1.5) * 10)
