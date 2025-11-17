@@ -40,6 +40,7 @@ from config import (
     WINDOWS_TTS_RATE, WINDOWS_TTS_VOLUME, WINDOWS_TTS_GENDER,
     ESPEAK_VOICE, ESPEAK_SPEED, ESPEAK_PITCH,
     LIPSYNC_ENABLED, LIPSYNC_PORT, LIPSYNC_BAUD,
+    LIGHTBULB_ENABLED, LIGHTBULB_PORT, LIGHTBULB_BAUD,
     SUBTITLE_PROJECTOR_ENABLED, SUBTITLE_PROJECTOR_FONT_SIZE, SUBTITLE_PROJECTOR_COLOR
 )
 
@@ -250,13 +251,8 @@ class EmbodiedAI:
         try:
             # FIRST: Clear any stuck print jobs before connecting printer
             clear_print_queue_preemptive()
-            
-            # Clear old personality state that has drawing machine references
-            import os
-            state_file = "personality_state.json"
-            if os.path.exists(state_file):
-                os.remove(state_file)
-                print("🧹 Cleared old personality state with drawing machine references")
+
+            # State persistence now enabled - DO NOT delete personality_state.json
             
             # Skip Camera class initialization - we'll use direct cv2 access
             if DEBUG_CAMERA:
@@ -280,9 +276,14 @@ class EmbodiedAI:
                     self.lipsync = DirectAudioLipSync(
                         port=LIPSYNC_PORT,
                         baud=LIPSYNC_BAUD,
-                        enabled=True
+                        enabled=True,
+                        lightbulb_port=LIGHTBULB_PORT if LIGHTBULB_ENABLED else None,
+                        lightbulb_baud=LIGHTBULB_BAUD if LIGHTBULB_ENABLED else 9600,
+                        lightbulb_enabled=LIGHTBULB_ENABLED
                     )
                     print(f"✅ Direct audio lip sync ready ({LIPSYNC_PORT})")
+                    if LIGHTBULB_ENABLED:
+                        print(f"💡 Lightbulb sync ready ({LIGHTBULB_PORT})")
                 except Exception as e:
                     print(f"⚠️ Lip sync disabled: {e}")
                     self.lipsync = None
@@ -431,17 +432,36 @@ class EmbodiedAI:
                 if self.frame_count % 5 == 0:
                     self._detect_face_movement(frame)
 
-                # === PERSON TRACKING IN MAIN LOOP (for instant reactivity) ===
+                # === PERSON TRACKING - Run every 5 frames to reduce CPU load and improve stability with poor camera ===
+                # Use cached data on non-tracking frames to avoid flicker
                 person_events = []
                 presence_state = None
-                if self.personality and hasattr(self.personality, 'person_tracker'):
-                    person_data = self.personality.person_tracker.analyze_frame(frame)
-                    person_events = person_data.get('events', [])
-                    presence_state = person_data.get('presence_state', None)
+                if self.frame_count % 5 == 0:
+                    if self.personality and hasattr(self.personality, 'person_tracker'):
+                        # Preprocess frame for poor camera quality - denoise before YOLO
+                        # This helps YOLO get more consistent detections from glitchy AV adapters
+                        denoised_frame = cv2.fastNlMeansDenoisingColored(frame, None, 10, 10, 7, 21)
+                        person_data = self.personality.person_tracker.analyze_frame(denoised_frame)
+                        person_events = person_data.get('events', [])
+                        presence_state = person_data.get('presence_state', None)
 
-                    # Update personality tracking data for visualization
-                    self.personality.last_person_positions = person_data.get('positions', [])
-                    self.personality.last_detection_frame_size = (frame.shape[1], frame.shape[0])
+                        # Cache for use on non-tracking frames
+                        self.cached_presence_state = presence_state
+
+                        # Update personality tracking data for visualization
+                        self.personality.last_person_positions = person_data.get('positions', [])
+                        self.personality.last_detection_frame_size = (frame.shape[1], frame.shape[0])
+                else:
+                    # Use cached presence state on non-tracking frames (no events though)
+                    presence_state = getattr(self, 'cached_presence_state', None)
+
+                # === ACTIVITY DETECTION - Run every 2 frames to reduce CPU load ===
+                activity_result = None
+                if self.frame_count % 2 == 0:
+                    if self.personality and hasattr(self.personality, 'activity_detector'):
+                        activity_result = self.personality.activity_detector.analyze_frame(frame)
+                        # Store for AI to use when processing
+                        self.personality.last_activity_result = activity_result
 
                     # GENERATE AND QUEUE URGENT REACTIONS based on presence state
                     if presence_state:
@@ -493,18 +513,19 @@ class EmbodiedAI:
                 # === DISPLAY OVERLAYS === (EXACT machine.py pattern)
                 if SHOW_CAMERA_PREVIEW:
                     # Resize frame for preview (matching machine.py)
-                    display_frame = cv2.resize(frame, (PREVIEW_WIDTH, PREVIEW_HEIGHT))
+                    # Use INTER_NEAREST for faster resizing (less quality but much faster)
+                    display_frame = cv2.resize(frame, (PREVIEW_WIDTH, PREVIEW_HEIGHT), interpolation=cv2.INTER_NEAREST)
 
-                    # Draw person detection boxes
+                    # Draw person detection boxes every frame (uses cached positions from last tracking run)
                     display_frame = self._draw_person_detections(display_frame)
 
                     # Apply live captioning subtitle system
                     if hasattr(self, 'current_subtitle') and self.current_subtitle:
                         display_frame = self._draw_live_caption_overlay(display_frame)
-                    
+
                     # DISPLAY (EXACT machine.py pattern)
                     cv2.imshow("🤖 AI Inner Monologue", display_frame)
-                    
+
                     # Key handling (machine.py pattern)
                     if cv2.waitKey(1) & 0xFF == ord("q"):
                         print("🛑 Quit key pressed")
@@ -833,6 +854,22 @@ class EmbodiedAI:
         timestamp_str = time.strftime("%H:%M:%S")
         print(f"\n[{timestamp_str}] ⚡ {text}")
 
+        # ADD TO CONVERSATION HISTORY so next thought continues from this
+        if self.personality:
+            # DON'T add period - let conversation flow naturally
+            # Greeting reactions should open into dialogue, not close off
+            pass
+
+            # UNIFIED SYSTEM: Record observation in focus engine (replaces _update_noun_tracking)
+            if hasattr(self.personality, 'focus_engine') and hasattr(self.personality.focus_engine, 'record_observation'):
+                current_focus = getattr(self.personality, 'current_focus_mode', 'VISUAL')
+                self.personality.focus_engine.record_observation(text, current_focus)
+
+            self.personality.recent_responses.append(text)
+            # Keep list size manageable
+            if len(self.personality.recent_responses) > self.personality.max_conversation_history:
+                self.personality.recent_responses.pop(0)
+
         # Update projector
         if self.subtitle_projector:
             try:
@@ -858,15 +895,20 @@ class EmbodiedAI:
     def _create_smart_chunks(self, text):
         """Break text into sentence-based chunks for live captioning flow"""
         import re
-        
+
+        # If the whole thought is short (under 15 words), don't chunk at all
+        total_words = len(text.split())
+        if total_words <= 15:
+            return [text.strip()]
+
         # Split into sentences using regex (more robust than simple punctuation)
         sentences = re.split(r'[.!?]+', text)
         sentences = [s.strip() for s in sentences if s.strip()]
-        
+
         chunks = []
         for sentence in sentences:
-            # Don't split sentences that are reasonable length (max ~10 words for comfortable reading)
-            if len(sentence.split()) <= 10:
+            # Don't split sentences that are reasonable length (max ~12 words for comfortable reading)
+            if len(sentence.split()) <= 12:
                 chunks.append(sentence)
             else:
                 # Split long sentences at natural breaks - KEEP PUNCTUATION for clarity
@@ -878,7 +920,7 @@ class EmbodiedAI:
                 for match in re.finditer(split_pattern, sentence):
                     # Get text INCLUDING the delimiter (comma/semicolon)
                     part = sentence[last_end:match.start() + 1].strip()  # +1 to include punctuation
-                    if part and len(part.split()) >= 3:  # Only split if chunk has at least 3 words
+                    if part and len(part.split()) >= 4:  # Only split if chunk has at least 4 words
                         parts.append(part)
                         last_end = match.end()
 
@@ -893,7 +935,7 @@ class EmbodiedAI:
                     chunks.extend(parts)
                 else:
                     chunks.append(sentence)
-        
+
         return chunks
     
     def _calculate_tts_duration(self, word_count):
@@ -1153,40 +1195,31 @@ class EmbodiedAI:
         """Generate contextual reaction based on presence state (not generic!)"""
         import random
 
-        # ARRIVAL reactions (contextual, not generic "someone's here")
+        # ARRIVAL reactions - natural conversation starters (no periods!)
         if presence_state.just_arrived:
             if presence_state.presence_duration < 1.0:
-                # Just arrived this moment
+                # Just arrived this moment - use interjections that flow into conversation
                 return random.choice([
                     "Oh",
-                    "Someone's here",
-                    "Hello",
-                    "Mm"
+                    "Hello there",
+                    "Hi",
+                    "Hm"  # Changed from "Mm" - pronounces better
                 ])
             else:
                 # Already acknowledged - don't repeat
                 return None
 
-        # DEPARTURE reactions
+        # DEPARTURE reactions - keep these shorter, already established they were here
         elif presence_state.just_left:
-            # Check how long they were here before leaving
-            # (presence_duration is 0 now, but we can infer from context)
-            return random.choice([
-                "They left",
-                "Alone now",
-                "Gone",
-                "Quiet now"
-            ])
+            # Don't react to every flicker - only if they were present for a bit
+            # This reduces spam from person detector noise
+            return None  # Let visual system notice absence naturally
 
-        # MOVEMENT reactions (lower urgency)
-        elif presence_state.activity_description in ["moving across the space", "moving around"]:
-            if presence_state.last_activity_time < 1.0:  # Just started moving
-                return random.choice([
-                    "Moving",
-                    "They're moving"
-                ])
-
-        return None  # No reaction needed
+        # MOVEMENT reactions - DISABLED
+        # Movement is better noticed naturally through visual prompts asking "what catches your attention"
+        # Explicit "Moving" reactions are too repetitive and break flow
+        # The activity detection still affects focus modes and response timing
+        return None  # Let visual system handle all movement naturally
 
     def _calculate_dynamic_interval(self):
         """Calculate AI process interval based on activity detection"""

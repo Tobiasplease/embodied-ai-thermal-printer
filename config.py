@@ -113,7 +113,7 @@ LIPSYNC_PORT = "COM20"  # Arduino serial port (duck)
 LIPSYNC_BAUD = 9600  # Serial baud rate
 
 # Lightbulb Settings (synchronized with TTS audio/jaw movement)
-LIGHTBULB_ENABLED = False  # Enable lightbulb that fluctuates with speech (disabled until dimmable bulb found)
+LIGHTBULB_ENABLED = True  # Enable lightbulb that fluctuates with speech
 LIGHTBULB_PORT = "COM21"  # Separate Arduino for lightbulb control
 LIGHTBULB_BAUD = 9600  # Serial baud rate
 

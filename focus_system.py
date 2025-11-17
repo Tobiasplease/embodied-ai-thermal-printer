@@ -67,7 +67,8 @@ class FocusEngine:
     - EMOTIONAL: Processing feelings, mood transitions, reactions
     - MEMORY: Exploring past observations, pattern recognition, familiarity
     - PHILOSOPHICAL: Deep introspection, identity, existence, meaning
-    - TEMPORAL: Time awareness, duration consciousness, change perception
+
+    Note: Temporal awareness is now integrated into compression baselines, not a separate focus mode.
     """
 
     def __init__(self):
@@ -81,8 +82,7 @@ class FocusEngine:
             'VISUAL': FocusSession(),
             'EMOTIONAL': FocusSession(),
             'MEMORY': FocusSession(),
-            'PHILOSOPHICAL': FocusSession(),
-            'TEMPORAL': FocusSession()
+            'PHILOSOPHICAL': FocusSession()
         }
         self.current_session = self.focus_sessions['VISUAL']
 
@@ -94,6 +94,7 @@ class FocusEngine:
         self.scene_started_at = time.time()
         self.scene_observation_count = 0
         self.last_significant_change = time.time()
+        self.last_update_time = time.time()  # For incremental static_duration calculation
         self.static_duration = 0.0
 
         # Scene noun vocabulary (from personality.py noun tracking)
@@ -125,10 +126,26 @@ class FocusEngine:
         # Exhaustion detection thresholds
         self.exhaustion_thresholds = {
             'VISUAL': 180,      # 3 minutes max before exhaustion check
-            'EMOTIONAL': 240,   # 4 minutes
+            'EMOTIONAL': 90,    # 90 seconds - EMOTIONAL mode gets repetitive fast
             'MEMORY': 180,      # 3 minutes
-            'PHILOSOPHICAL': 300,  # 5 minutes for deep thinking
-            'TEMPORAL': 120     # 2 minutes
+            'PHILOSOPHICAL': 300  # 5 minutes for deep thinking
+        }
+
+        # FOCUS STICKINESS: How resistant each mode is to interruption
+        # Higher = harder to interrupt, requires stronger evidence
+        self.focus_stickiness = {
+            'VISUAL': 0.2,          # Easy to interrupt (observing is shallow)
+            'EMOTIONAL': 0.5,       # Moderate (processing feelings)
+            'MEMORY': 0.6,          # Harder (retrieving memories)
+            'PHILOSOPHICAL': 0.9    # Very sticky (deep contemplation)
+        }
+
+        # Minimum duration before a focus can be interrupted (seconds)
+        self.min_focus_duration = {
+            'VISUAL': 15,
+            'EMOTIONAL': 30,
+            'MEMORY': 45,
+            'PHILOSOPHICAL': 60     # Need at least 1 min of philosophical thought
         }
 
         # Novelty thresholds (raised from 0.6/0.15 to reduce hyper-reactivity)
@@ -217,15 +234,23 @@ class FocusEngine:
         else:
             signals.append("depth_plateau:no")
 
-        # Signal 4: Observation count - VISUAL mode should rotate after ~15-20 observations
+        # Signal 4: Observation count - modes should rotate after certain counts
         if focus_mode == "VISUAL" and session.observation_count >= 15:
             # VISUAL exhausts from sheer observation count, not just time
             obs_ratio = min(1.0, session.observation_count / 20)
             obs_bonus = obs_ratio * 0.4
             score += obs_bonus
             signals.append(f"obs_count:+{obs_bonus:.2f}({session.observation_count}/20)")
+        elif focus_mode == "EMOTIONAL" and session.observation_count >= 8:
+            # EMOTIONAL exhausts quickly - it tends to be repetitive
+            obs_ratio = min(1.0, session.observation_count / 12)
+            obs_bonus = obs_ratio * 0.5  # Stronger bonus than VISUAL
+            score += obs_bonus
+            signals.append(f"obs_count:+{obs_bonus:.2f}({session.observation_count}/12)")
         elif focus_mode == "VISUAL":
             signals.append(f"obs_count:{session.observation_count}/15(not yet)")
+        elif focus_mode == "EMOTIONAL":
+            signals.append(f"obs_count:{session.observation_count}/8(not yet)")
 
         # Signal 5: Time in focus
         duration = session.duration()
@@ -265,12 +290,11 @@ class FocusEngine:
         nouns = self.extract_scene_nouns(observation_text)
 
         if scene_changed or not self.scene_nouns:
-            # Scene changed - reset scene tracking
+            # Scene changed - reset scene tracking (but NOT static_duration - that's handled by activity detector now)
             self.scene_nouns = nouns
             self.scene_started_at = time.time()
             self.scene_observation_count = 1
-            self.last_significant_change = time.time()
-            self.static_duration = 0.0
+            # Don't reset static_duration here - gradual decay handles it in update()
         else:
             # Check if scene has changed significantly (30% different nouns)
             if self.scene_nouns:
@@ -283,14 +307,13 @@ class FocusEngine:
                         self.scene_nouns = nouns
                         self.scene_started_at = time.time()
                         self.scene_observation_count = 1
-                        self.last_significant_change = time.time()
-                        self.static_duration = 0.0
+                        # Don't reset static_duration here - gradual decay handles it in update()
                         return
 
             # Same scene - increment
             self.scene_observation_count += 1
             self.scene_nouns.update(nouns)
-            self.static_duration = time.time() - self.last_significant_change
+            # Don't calculate static_duration here - it's handled in update() with gradual decay
 
     def get_focus_context_for_prompts(self, focus_mode: str) -> Dict:
         """
@@ -354,12 +377,34 @@ class FocusEngine:
         # === TEMPORAL ANALYSIS ===
         session_duration = current_time - self.session_start
 
-        # Calculate static duration (how long since significant change)
+        # Calculate static duration with GRADUAL DECAY instead of hard reset
+        # This allows static_duration to build up even with occasional movement
+
         if scene_changed:
+            # Person arrived/left = major scene change
+            # But use DECAY instead of reset (allows philosophical mode even with movement)
+            self.static_duration *= 0.5  # Cut in half
             self.last_significant_change = current_time
-            self.static_duration = 0.0
+        elif activity_result and activity_result.get('is_real_movement'):
+            # TIERED DECAY: Only decay on VERY LARGE movements (>40%)
+            # Movements 30-40% are already filtered by activity detector
+            # But if we do get movement signals, only decay on extreme motion
+            fg_percentage = activity_result.get('fg_percentage', 0)
+
+            if fg_percentage > 40:
+                # Very large movement - apply decay
+                self.static_duration *= 0.85  # Reduce by 15%
+                self.last_significant_change = current_time
+            else:
+                # Normal movement (<40%) - ignore, keep accumulating
+                self.static_duration += (current_time - self.last_update_time)
         else:
-            self.static_duration = current_time - self.last_significant_change
+            # No movement - accumulate static time normally
+            # Just add the time since last update
+            self.static_duration += (current_time - self.last_update_time)
+
+        # Track when we last updated for next calculation
+        self.last_update_time = current_time
 
         # === VISUAL NOVELTY ANALYSIS ===
         visual_novelty = self._calculate_visual_novelty(recent_observations, person_events, activity_result)
@@ -433,18 +478,35 @@ class FocusEngine:
                 # Cooldown expired
                 del self.recently_exhausted['VISUAL']
 
-        # Person events - snap to VISUAL only for TRUE environmental changes
-        if novelty_score >= 0.95:  # Someone NEW arrived or everyone LEFT
-            # Only interrupt if NOT currently in VISUAL AND not in cooldown
-            # If already in VISUAL, we're already observing - don't reset
-            if self.current_focus != "VISUAL" and not visual_in_cooldown:
-                return self._focus_visual(state_analysis, "person_event_interrupt")
-            # If in VISUAL already and someone arrives/leaves, just note it but stay in current thought
+        # === CHECK FOCUS STICKINESS ===
+        # Deeper modes resist interruption unless enough time has passed or urgency is extreme
+        current_stickiness = self.focus_stickiness.get(self.current_focus, 0.5)
+        min_duration = self.min_focus_duration.get(self.current_focus, 30)
+        time_in_focus = current_time - self.session_start
 
-        # High visual novelty - interrupt with raised threshold (only if not in VISUAL)
-        # Threshold is 0.75, so moderate novelty (0.6) won't trigger this
+        # Person events - ALWAYS interrupt (highest priority)
+        # But check minimum duration for philosophical/temporal modes
+        if novelty_score >= 0.95:  # Someone NEW arrived or everyone LEFT
+            if self.current_focus in ['PHILOSOPHICAL'] and time_in_focus < min_duration:
+                # Too deep in thought to interrupt yet
+                print(f"🧠 {self.current_focus} mode protected - person event noted but not interrupting ({time_in_focus:.0f}s < {min_duration}s)")
+            elif self.current_focus != "VISUAL" and not visual_in_cooldown:
+                return self._focus_visual(state_analysis, "person_event_interrupt")
+
+        # High visual novelty - check stickiness before interrupting
+        # Deeper modes require stronger evidence OR more time passed
         if novelty_score > self.high_novelty_threshold and self.current_focus != "VISUAL" and not visual_in_cooldown:
-            return self._focus_visual(state_analysis, "high_novelty_interrupt")
+            # Apply stickiness: need higher novelty for stickier modes
+            adjusted_threshold = self.high_novelty_threshold + (current_stickiness * 0.3)
+
+            if time_in_focus < min_duration:
+                # Too soon to interrupt - stay in current focus
+                print(f"🧠 {self.current_focus} mode sticky - ignoring novelty ({time_in_focus:.0f}s < {min_duration}s)")
+            elif novelty_score > adjusted_threshold:
+                # Strong enough evidence to overcome stickiness
+                return self._focus_visual(state_analysis, "high_novelty_interrupt")
+            else:
+                print(f"🧠 {self.current_focus} mode sticky - novelty {novelty_score:.2f} < {adjusted_threshold:.2f}")
 
         # Significant emotional shifts need processing
         if state_analysis['emotional']['volatility'] > 0.6:
@@ -477,7 +539,7 @@ class FocusEngine:
 
         # Long static period with no exhaustion - naturally progress to introspection
         if static_duration > self.introspection_threshold:
-            return self._focus_temporal(state_analysis, "deep_temporal_contemplation")
+            return self._focus_philosophical(state_analysis, "temporal_depth_introspection")
         elif static_duration > self.boredom_threshold:
             return self._focus_philosophical(state_analysis, "boredom_introspection")
 
@@ -719,20 +781,7 @@ class FocusEngine:
         
         return "PHILOSOPHICAL", context
     
-    def _focus_temporal(self, state: Dict, reason: str) -> Tuple[str, Dict]:
-        """Temporal focus mode - time awareness and duration consciousness."""
-        self._transition_focus("TEMPORAL", reason)
-        
-        context = {
-            'mode': 'TEMPORAL',
-            'reason': reason,
-            'session_duration': state['temporal']['session_duration'],
-            'time_awareness': state['consciousness_readiness']['temporal'],
-            'attention_type': 'temporal_contemplation',
-            'compression_level': 'low'  # Need temporal context
-        }
-        
-        return "TEMPORAL", context
+    # REMOVED: _focus_temporal - temporal awareness now integrated into compression baselines
     
     def _maintain_current_focus(self, state: Dict) -> Tuple[str, Dict]:
         """Continue with current focus but update context."""
@@ -752,7 +801,7 @@ class FocusEngine:
     def _rotate_to_fresh_focus(self, state: Dict, reason: str) -> Tuple[str, Dict]:
         """Rotate to least recently used focus mode (exhaustion-driven rotation)"""
         # Get all focus modes
-        all_focuses = ["VISUAL", "EMOTIONAL", "MEMORY", "PHILOSOPHICAL", "TEMPORAL"]
+        all_focuses = ["VISUAL", "EMOTIONAL", "MEMORY", "PHILOSOPHICAL"]
 
         # Find least recently used focus
         recent_focuses = list(self.focus_history)[-5:]
@@ -767,8 +816,6 @@ class FocusEngine:
                     return self._focus_memory(state, reason)
                 elif focus == "PHILOSOPHICAL":
                     return self._focus_philosophical(state, reason)
-                elif focus == "TEMPORAL":
-                    return self._focus_temporal(state, reason)
 
         # All recently visited - pick based on current state
         static_duration = state['temporal']['static_duration']

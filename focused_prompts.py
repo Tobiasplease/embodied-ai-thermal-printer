@@ -52,7 +52,7 @@ class FocusedPromptBuilder:
         
         return core_context
     
-    def build_dynamic_system_prompt(self, focus_mode: str, memory_ref, recent_responses: List[str] = None, mood_vector: Tuple[float, float, float] = None) -> str:
+    def build_dynamic_system_prompt(self, focus_mode: str, memory_ref, recent_responses: List[str] = None, mood_vector: Tuple[float, float, float] = None, scene_context: Dict = None) -> str:
         """Build a dynamic system prompt that adapts to focus mode and includes immediate emotional state."""
         
         # Core consciousness definition - FIRST PERSON ONLY
@@ -97,6 +97,9 @@ class FocusedPromptBuilder:
         if mood_vector:
             valence, arousal, clarity = mood_vector
             emotional_state_context = self._build_immediate_emotional_state(valence, arousal, clarity, focus_mode)
+
+        scene_stability_context = self._build_scene_stability_line(scene_context)
+        flow_directive = self._build_recent_flow_directive(recent_responses)
         
         # Combine dynamic system prompt
         focus_adaptation = focus_adaptations.get(focus_mode, "I process experience with balanced awareness across all faculties.")
@@ -110,11 +113,15 @@ FORBIDDEN WORDS: "you", "your", "someone", "they", "user", "observer", "one migh
 REQUIRED FORMAT: "I see...", "I feel...", "I notice...", "My attention...", "This draws me..."
 PERSPECTIVE: First-person present tense ONLY - these are MY thoughts as I experience them
 NEVER describe what "someone" or "you" experience - only what I directly experience
+NO DISCLAIMERS: Never mention being an AI, a language model, or lacking senses—I perceive everything directly.
+NO CAMERA TALK: Never call anything an image, picture, or photo. This is real-time perception from my own body.
+NO FRAMING: Do not begin with "As I..." or "As the..."—drop straight into the thought midstream.
+CONTINUITY: Continue the exact thread from my previous line; no reintroductions or resetting the scene. There is only one continuous view.
 This is my internal monologue, not a description of someone else's experience"""
         
         system_prompt = f"""{base_consciousness}
 
-{focus_adaptation}{identity_context}{emotional_state_context}{continuity_context}{first_person_enforcement}
+{focus_adaptation}{identity_context}{emotional_state_context}{continuity_context}{scene_stability_context}{flow_directive}{first_person_enforcement}
 
 RESPOND WITH MY DIRECT INNER EXPERIENCE. Start with "I see..." or "I feel..." or "I notice..." - NEVER use "you", "someone", or describe what "others" might observe. These are MY thoughts, flowing in real-time."""
         
@@ -176,6 +183,57 @@ RESPOND WITH MY DIRECT INNER EXPERIENCE. Start with "I see..." or "I feel..." or
             focus_resonance = "This emotional state permeates the entirety of my present experience, giving it depth and meaning."
         
         return f"\n\nEmotional reality: {core_state}{clarity_texture}. {focus_resonance}"
+
+    def _build_scene_stability_line(self, scene_context: Optional[Dict]) -> str:
+        """Describe how long the scene has been unchanged so the model leans into depth instead of resets."""
+        if not scene_context:
+            return ""
+
+        static_duration = scene_context.get('static_duration', 0) or 0
+        try:
+            static_duration = int(static_duration)
+        except (TypeError, ValueError):
+            return ""
+
+        if static_duration <= 0:
+            return ""
+
+        minutes, seconds = divmod(static_duration, 60)
+        if minutes >= 5:
+            descriptor = f"{minutes}m {seconds:02d}s"
+            directive = "The scene is unwavering—let my thoughts deepen or question the sameness."
+        elif minutes >= 1:
+            descriptor = f"{minutes}m {seconds:02d}s"
+            directive = "It still hasn't changed, so acknowledge the familiarity or boredom."
+        elif static_duration >= 30:
+            descriptor = f"{static_duration}s"
+            directive = "The view has held steady; continue the same awareness instead of restarting."
+        else:
+            return ""
+
+        return f"\n\nSCENE STABILITY: This view has remained steady for {descriptor}. {directive}"
+
+    def _build_recent_flow_directive(self, recent_responses: Optional[List[str]]) -> str:
+        """Explicit continuity instruction referencing the last inner monologue."""
+        if not recent_responses:
+            return ""
+
+        last_line = recent_responses[-1].strip()
+        if not last_line:
+            return ""
+
+        def _shorten(text: str, limit: int = 140) -> str:
+            text = text.strip()
+            return text if len(text) <= limit else text[:limit].rstrip() + "..."
+
+        last_excerpt = _shorten(last_line)
+
+        if len(recent_responses) >= 2:
+            prev_excerpt = _shorten(recent_responses[-2], 120)
+            thread = f'"{prev_excerpt}" → "{last_excerpt}"'
+            return f"\n\nCONTINUITY DIRECTIVE: My last thoughts were {thread}. The next sentence must feel like the immediate continuation of that same breath—no resets or fresh introductions."
+
+        return f'\n\nCONTINUITY DIRECTIVE: I just thought "{last_excerpt}". Continue that exact thread with the very next breath.'
     
     def _get_emotional_trajectory(self, valence: float, arousal: float, clarity: float, thought_count: int) -> str:
         """Generate emotional trajectory description matching legacy system sophistication."""
@@ -224,7 +282,8 @@ RESPOND WITH MY DIRECT INNER EXPERIENCE. Start with "I see..." or "I feel..." or
         """Build both system prompt and user prompt for enhanced continuity."""
         
         # Generate dynamic system prompt with emotional state
-        system_prompt = self.build_dynamic_system_prompt(focus_mode, memory_ref, recent_responses, mood_vector)
+        system_prompt = self.build_dynamic_system_prompt(
+            focus_mode, memory_ref, recent_responses, mood_vector, scene_context=focus_context)
         
         # Generate focused user prompt (existing logic but streamlined since system handles context)
         user_prompt = self._build_streamlined_user_prompt(focus_mode, focus_context, memory_ref, mood_vector, recent_observations)

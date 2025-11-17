@@ -16,19 +16,35 @@ from typing import Optional
 class DirectAudioLipSync:
     """Plays audio and controls jaw servo based on actual waveform analysis"""
 
-    def __init__(self, port: str = "COM3", baud: int = 9600, enabled: bool = True):
+    def __init__(self, port: str = "COM3", baud: int = 9600, enabled: bool = True,
+                 lightbulb_port: Optional[str] = None, lightbulb_baud: int = 9600,
+                 lightbulb_enabled: bool = False):
         """
         Initialize direct audio lip sync
 
         Args:
-            port: Serial port for Arduino
+            port: Serial port for jaw servo Arduino
             baud: Baud rate
             enabled: Enable/disable lip sync
+            lightbulb_port: Serial port for lightbulb Arduino (optional)
+            lightbulb_baud: Baud rate for lightbulb
+            lightbulb_enabled: Enable/disable synchronized lightbulb
         """
         self.enabled = enabled
         self.port = port
         self.baud = baud
         self.serial_conn = None
+
+        # Lightbulb control (separate Arduino)
+        self.lightbulb_enabled = lightbulb_enabled
+        self.lightbulb_port = lightbulb_port
+        self.lightbulb_baud = lightbulb_baud
+        self.lightbulb_serial = None
+
+        # Lightbulb smoothing (prevents strobing)
+        self.lightbulb_current_brightness = 20  # Start dim (maps to 30/255 on Arduino)
+        self.lightbulb_smooth_factor = 0.2  # Slower smoothing for bulb (0.2 = smooth, 1.0 = instant)
+
         self.is_playing = False
         self.should_stop = False
 
@@ -58,8 +74,11 @@ class DirectAudioLipSync:
         if self.enabled:
             self._connect_serial()
 
+        if self.lightbulb_enabled and self.lightbulb_port:
+            self._connect_lightbulb()
+
     def _connect_serial(self):
-        """Connect to Arduino"""
+        """Connect to jaw servo Arduino"""
         try:
             self.serial_conn = serial.Serial(self.port, self.baud, timeout=1)
             time.sleep(2)
@@ -70,8 +89,20 @@ class DirectAudioLipSync:
             self.enabled = False
             self.serial_conn = None
 
+    def _connect_lightbulb(self):
+        """Connect to lightbulb Arduino"""
+        try:
+            self.lightbulb_serial = serial.Serial(self.lightbulb_port, self.lightbulb_baud, timeout=1)
+            time.sleep(2)
+            self._send_lightbulb_command(self.JAW_CLOSED)  # Start dim
+            print(f"✅ Lightbulb sync connected to {self.lightbulb_port}")
+        except Exception as e:
+            print(f"⚠️ Lightbulb sync disabled: {e}")
+            self.lightbulb_enabled = False
+            self.lightbulb_serial = None
+
     def _send_command(self, angle: int):
-        """Send servo angle to Arduino"""
+        """Send servo angle to jaw Arduino"""
         if not self.enabled or not self.serial_conn:
             return
         try:
@@ -79,6 +110,25 @@ class DirectAudioLipSync:
             self.serial_conn.write(f"{angle}\n".encode())
         except Exception as e:
             print(f"⚠️ Lip sync error: {e}")
+
+    def _send_lightbulb_command(self, target_angle: int):
+        """Send smoothed brightness to lightbulb Arduino (prevents strobing)"""
+        if not self.lightbulb_enabled or not self.lightbulb_serial:
+            return
+        try:
+            target_angle = max(self.JAW_CLOSED, min(self.JAW_OPEN, int(target_angle)))
+
+            # Smooth the transition using exponential moving average
+            # This prevents rapid flickering
+            self.lightbulb_current_brightness = (
+                self.lightbulb_smooth_factor * target_angle +
+                (1 - self.lightbulb_smooth_factor) * self.lightbulb_current_brightness
+            )
+
+            smoothed_angle = int(self.lightbulb_current_brightness)
+            self.lightbulb_serial.write(f"{smoothed_angle}\n".encode())
+        except Exception as e:
+            print(f"⚠️ Lightbulb sync error: {e}")
 
     def _amplitude_to_angle(self, amplitude: float) -> int:
         """Convert amplitude to jaw angle with minimum visible movement"""
@@ -190,10 +240,12 @@ class DirectAudioLipSync:
                         print(f"Callback error: {e}")
                     callback_fired = True
 
-                # Move jaw (only if enabled)
+                # Move jaw and sync lightbulb
                 if self.enabled:
                     jaw_angle = self._amplitude_to_angle(amplitude)
                     self._send_command(jaw_angle)
+                    # Send same angle to lightbulb (it will map to brightness)
+                    self._send_lightbulb_command(jaw_angle)
 
                 # Read next chunk
                 data = wf.readframes(chunk_size)
@@ -214,18 +266,23 @@ class DirectAudioLipSync:
             print(f"⚠️ Audio playback error: {e}")
 
         finally:
-            # Close jaw
+            # Close jaw and dim lightbulb
             self._send_command(self.JAW_CLOSED)
+            self._send_lightbulb_command(self.JAW_CLOSED)
             self.is_playing = False
 
     def stop(self):
-        """Stop playback and close jaw"""
+        """Stop playback, close jaw, and turn off lightbulb"""
         self.should_stop = True
         time.sleep(0.2)
 
         if self.serial_conn:
             self._send_command(self.JAW_CLOSED)
             self.serial_conn.close()
+
+        if self.lightbulb_serial:
+            self._send_lightbulb_command(self.JAW_CLOSED)
+            self.lightbulb_serial.close()
 
         self.audio.terminate()
         print("✅ Direct audio lip sync stopped")

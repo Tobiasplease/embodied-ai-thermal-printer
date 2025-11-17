@@ -72,6 +72,7 @@ class PersonTracker:
         # Tracking state
         self.current_person_count = 0
         self.last_person_count = 0
+        self.smoothed_person_count = 0
         self.person_positions = []
         self.last_person_positions = []  # Track previous frame for movement
         self.scene_populated = False
@@ -86,19 +87,19 @@ class PersonTracker:
         self.min_detection_height = 60  # pixels (lowered for distant detections)
 
         # Stable state detection (prevent event spam from detection jitter)
-        # REDUCED thresholds for faster reaction
+        # INCREASED thresholds for more stable person counting (reduce flickering)
         self.stable_person_count = 0  # The CONFIRMED stable count
         self.candidate_count = None    # Potential new count being evaluated
         self.candidate_frames = 0      # How many frames we've seen the candidate
-        self.stability_threshold = 2   # REDUCED: 2 frames (~200ms) for quick response
+        self.stability_threshold = 40  # 4 seconds @ 10fps - strong debounce to prevent flicker
 
         # Event cooldown (prevent duplicate events)
-        # REDUCED cooldown for more reactive acknowledgments
         self.last_event_time = {}      # event_type -> timestamp
-        self.event_cooldown = 3.0      # REDUCED: 3 seconds between same event type
+        self.event_cooldown = 5.0      # 5 seconds between same event type
 
         # History for smoothing (reduce jitter)
-        self.count_history = deque(maxlen=3)
+        # INCREASED history length for stronger smoothing
+        self.count_history = deque(maxlen=10)
 
         # Size change smoothing (prevent false "coming closer"/"moving away" from bbox jitter)
         self.size_change_history = deque(maxlen=5)  # Track last 5 size changes
@@ -106,6 +107,14 @@ class PersonTracker:
 
         # Performance tracking
         self.last_inference_time = 0
+
+        # Detection persistence (prevents flicker-driven arrivals/departures)
+        self.presence_confirmation_time = 0.6   # Seconds of consistent detection before confirming presence
+        self.absence_grace_time = 2.5           # Seconds to wait before declaring everyone gone
+        self.pending_positive_count = 0
+        self.pending_positive_start = None
+        self.last_positive_detection_time = 0.0
+        self.last_confirmed_count = 0
 
     def analyze_image(self, image_path):
         """
@@ -180,15 +189,18 @@ class PersonTracker:
                     })
 
                 self.current_person_count = len(self.person_positions)
+                stabilized_count = self._apply_presence_grace(self.current_person_count)
             else:
                 self.current_person_count = 0
                 self.person_positions = []
+                stabilized_count = self._apply_presence_grace(0)
 
             # Add to history for smoothing
-            self.count_history.append(self.current_person_count)
+            self.count_history.append(stabilized_count)
 
             # Use majority vote from history to reduce jitter
             smoothed_count = self._get_smoothed_count()
+            self.smoothed_person_count = smoothed_count
 
             # Detect narrative events
             events = self._detect_events(smoothed_count)
@@ -290,6 +302,44 @@ class PersonTracker:
             self.candidate_frames = 1
 
         return events
+
+    def _apply_presence_grace(self, raw_count: int) -> int:
+        """Apply hysteresis so brief detection drops don't register as departures."""
+        now = time.time()
+
+        if raw_count > 0:
+            if self.pending_positive_count != raw_count:
+                self.pending_positive_count = raw_count
+                self.pending_positive_start = now
+            elif self.pending_positive_start is None:
+                self.pending_positive_start = now
+
+            self.last_positive_detection_time = now
+
+            # Confirm initial presence after a short stability window
+            if self.last_confirmed_count == 0:
+                if self.pending_positive_start and (now - self.pending_positive_start) >= self.presence_confirmation_time:
+                    self.last_confirmed_count = self.pending_positive_count
+                else:
+                    return 0
+            else:
+                # Update confirmed count if detections consistently show a new number
+                if (self.pending_positive_count != self.last_confirmed_count and
+                        self.pending_positive_start and
+                        (now - self.pending_positive_start) >= self.presence_confirmation_time):
+                    self.last_confirmed_count = self.pending_positive_count
+
+            return self.last_confirmed_count
+
+        # No detections - hold last known state briefly before declaring absence
+        if self.last_positive_detection_time and (now - self.last_positive_detection_time) < self.absence_grace_time:
+            return self.last_confirmed_count
+
+        # Grace expired - truly alone
+        self.pending_positive_count = 0
+        self.pending_positive_start = None
+        self.last_confirmed_count = 0
+        return 0
 
     def _detect_person_activity(self):
         """Detect what the person is doing based on position/movement"""
