@@ -1443,8 +1443,8 @@ Output: Brief first-person thought (10-20 words), natural and present, mid-thoug
                 elif current_focus == "PHILOSOPHICAL" and observation_count > 5:
                     task_directive = "Internal monologue (what does this mean? why am I here?):"
                 elif current_focus == "EMOTIONAL":
-                    # Brief emotional reaction - no philosophizing
-                    task_directive = f"Internal monologue (brief gut feeling):"
+                    # Sensory-led emotional reaction - anchor in a concrete detail
+                    task_directive = f"Internal monologue (one sensory detail + how it hits me):"
                 else:
                     task_directive = "Internal monologue (continue):"
 
@@ -2603,7 +2603,7 @@ Internal monologue (continue):"""
 
         return (
             f"{stitched}\n"
-            "Continue in the same breath without restarting; one short first-person sentence. Avoid leading with 'Feeling' unless it's the only true opening."
+            "Continue in the same breath without restarting; one short first-person sentence."
         )
 
     def _build_memory_hint_for_awakening(self):
