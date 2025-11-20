@@ -2597,11 +2597,13 @@ Internal monologue (continue):"""
         if not recent:
             return "A thought is forming—continue it without restarting the scene."
 
-        thread_line = " → ".join(recent)
+        # Stitch the thread as a single flowing line and trail an ellipsis to signal continuation.
+        thread_line = " ... ".join(recent)
+        stitched = f"{thread_line} ..."
 
         return (
-            f"So far: {thread_line}\n"
-            "Write the next line in this same internal stream. One short first-person sentence. No restarts or summaries."
+            f"{stitched}\n"
+            "Continue in the same breath without restarting; one short first-person sentence. Avoid leading with 'Feeling' unless it's the only true opening."
         )
 
     def _build_memory_hint_for_awakening(self):
