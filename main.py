@@ -236,6 +236,9 @@ class EmbodiedAI:
         # Silence period tracking
         self.in_silence_period = False
         self.silence_start_time = 0
+
+        # Arm SIGINT/SIGTERM handling only after init completes to avoid stray signals during startup
+        self.signals_armed = False
         
         # Setup signal handlers for clean shutdown
         signal.signal(signal.SIGINT, self._signal_handler)
@@ -246,6 +249,8 @@ class EmbodiedAI:
     
     def _signal_handler(self, signum, frame):
         """Handle shutdown signals gracefully"""
+        if not getattr(self, "signals_armed", False):
+            return  # Ignore early signals during startup
         print(f"\n🛑 Shutdown signal received ({signum}ö")
         self.shutdown()
         sys.exit(0)
@@ -427,6 +432,8 @@ class EmbodiedAI:
             print("❌ Initialization failed - cannot start")
             return
         
+        # Enable signal handling after successful init
+        self.signals_armed = True
         self.running = True
         print("🚀 Embodied AI v2 starting main loop...")
         
