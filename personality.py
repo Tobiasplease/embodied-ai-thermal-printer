@@ -40,7 +40,7 @@ from config import (
     PERSONALITY_SAVE_FILE, DEBUG_AI, VERBOSE_OUTPUT
 )
 
-MAX_THOUGHT_TOKENS = 18  # Absolute upper bound for single-sentence thoughts
+MAX_THOUGHT_TOKENS = 22  # Absolute upper bound for single-sentence thoughts
 
 
 class AdvancedMemory:
