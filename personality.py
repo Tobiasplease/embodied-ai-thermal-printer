@@ -2593,7 +2593,7 @@ Internal monologue (continue):"""
         if not cleaned:
             return "First feeling already forming. Continue it without reintroducing the scene."
 
-        recent = cleaned[-2:]
+        recent = cleaned[-3:]
         if not recent:
             return "A thought is forming—continue it without restarting the scene."
 
