@@ -2594,18 +2594,14 @@ Internal monologue (continue):"""
             return "First feeling already forming. Continue it without reintroducing the scene."
 
         recent = cleaned[-2:]
-        paragraph_tail = " ".join(recent).strip()
-        if not paragraph_tail:
-            return "A thought is formingâ€”continue it without restarting the scene."
+        if not recent:
+            return "A thought is forming—continue it without restarting the scene."
 
-        thread_line = " â†’ ".join(recent)
+        thread_line = " → ".join(recent)
 
-        # Ensure the snippet ends with space/punctuation so the model keeps writing instead of repeating.
-        suffix = "" if paragraph_tail.endswith(("-", "â€¦", "...", " ")) else " "
         return (
-            "Continue the same first-person paragraph without repeating earlier sentences.\n"
-            f"Thought thread so far: {thread_line}\n"
-            f"{paragraph_tail}{suffix}"
+            f"So far: {thread_line}\n"
+            "Write the next line in this same internal stream. One short first-person sentence. No restarts or summaries."
         )
 
     def _build_memory_hint_for_awakening(self):
