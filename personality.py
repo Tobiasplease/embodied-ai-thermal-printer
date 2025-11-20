@@ -1536,6 +1536,19 @@ Current state: {full_context_clean}"""
                 phrase_list = ", ".join([f'"{phrase}" ({count}x)' for phrase, count in overused_phrases[:2]])
                 repetition_guidance += f"\nRepetition alert: {phrase_list} already covered. Either notice something genuinely new or stay quiet."
 
+            # Soft guard: avoid repeating the same opening word as recent lines
+            if recent_thoughts:
+                openings = []
+                for t in recent_thoughts[-3:]:
+                    first = t.strip().split()[:1]
+                    if first:
+                        w = first[0].strip(".,!?").lower()
+                        if w and w not in openings:
+                            openings.append(w)
+                if openings:
+                    opening_list = ", ".join(f"'{w}'" for w in openings[:3])
+                    repetition_guidance += f"\nAvoid starting with: {opening_list}."
+
             if self.repetition_alert_observations > 0:
                 self.repetition_alert_observations -= 1
                 if self.last_repeated_hint:
