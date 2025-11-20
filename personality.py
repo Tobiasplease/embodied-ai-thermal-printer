@@ -1639,6 +1639,11 @@ Internal monologue (continue):"""
                 # Treat pure ellipsis as intentional silence
                 if response.strip() in {"...", "..", "."}:
                     return None
+                # If identical to most recent spoken response, choose silence to break loops
+                if self.recent_responses:
+                    latest_clean = self.recent_responses[-1].strip().lower()
+                    if response.strip().lower() == latest_clean:
+                        return None
 
             if not response or not response.strip():
                 return None
