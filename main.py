@@ -44,6 +44,8 @@ from config import (
     SUBTITLE_PROJECTOR_ENABLED, SUBTITLE_PROJECTOR_FONT_SIZE, SUBTITLE_PROJECTOR_COLOR
 )
 
+MAX_CAPTION_WORDS = 24  # Hard cap for spoken thoughts to enforce brevity
+
 # Import lip sync FIRST (optional) - direct audio version
 if LIPSYNC_ENABLED:
     try:
@@ -196,6 +198,7 @@ class EmbodiedAI:
         self.voice_system = None
         self.lipsync = None
         self.subtitle_projector = None
+        self.max_caption_words = MAX_CAPTION_WORDS
         
         # Timing controls - avoid threading issues
         self.last_ai_process_time = 0
@@ -221,6 +224,7 @@ class EmbodiedAI:
         self.subtitle_start_time = 0
         self.chunk_display_duration = 0  # Dynamic duration per chunk
         self.last_chunk_change_time = 0
+        self.recent_spoken_chunks = []  # Remember last few spoken chunks across captions
         self.subtitle_lock = threading.Lock()
         self.caption_version = 0  # Track caption changes to prevent old chunks from speaking
         self.pending_caption = None  # Queue next caption to start after current chunk finishes
@@ -245,6 +249,35 @@ class EmbodiedAI:
         print(f"\n🛑 Shutdown signal received ({signum}ö")
         self.shutdown()
         sys.exit(0)
+
+    def _truncate_to_word_limit(self, text, limit):
+        """Trim text to a maximum number of words while keeping punctuation natural."""
+        if not text or not limit:
+            return text
+
+        words = text.split()
+        if len(words) <= limit:
+            return text
+
+        trimmed = ' '.join(words[:limit]).rstrip(",;")
+        if trimmed and trimmed[-1] not in ".?!…":
+            trimmed += "..."
+        return trimmed
+
+    def _normalize_chunk_text(self, text):
+        """Normalize chunk text for dedupe comparisons."""
+        if not text:
+            return ""
+        return " ".join(text.strip().lower().split())
+
+    def _remember_spoken_chunk(self, text):
+        """Track spoken chunks to avoid repeating openings."""
+        normalized = self._normalize_chunk_text(text)
+        if not normalized:
+            return
+        self.recent_spoken_chunks.append(normalized)
+        if len(self.recent_spoken_chunks) > 6:
+            self.recent_spoken_chunks.pop(0)
     
     def initialize(self):
         """Initialize all components"""
@@ -438,9 +471,9 @@ class EmbodiedAI:
                 presence_state = None
                 if self.frame_count % 5 == 0:
                     if self.personality and hasattr(self.personality, 'person_tracker'):
-                        # Preprocess frame for poor camera quality - denoise before YOLO
-                        # This helps YOLO get more consistent detections from glitchy AV adapters
-                        denoised_frame = cv2.fastNlMeansDenoisingColored(frame, None, 10, 10, 7, 21)
+                        # Lightweight denoising for overheating systems - use bilateral filter
+                        # Much faster than fastNlMeansDenoising, generates less heat
+                        denoised_frame = cv2.bilateralFilter(frame, 5, 50, 50)
                         person_data = self.personality.person_tracker.analyze_frame(denoised_frame)
                         person_events = person_data.get('events', [])
                         presence_state = person_data.get('presence_state', None)
@@ -599,6 +632,13 @@ class EmbodiedAI:
                 clean_caption = ' '.join(clean_caption.split())
                 clean_caption = clean_caption.strip()
                 
+                if self.max_caption_words:
+                    original_word_count = len(clean_caption.split())
+                    if original_word_count > self.max_caption_words:
+                        clean_caption = self._truncate_to_word_limit(clean_caption, self.max_caption_words)
+                        if DEBUG_AI:
+                            print(f"✂️ Trimmed caption from {original_word_count} to {len(clean_caption.split())} words")
+                
                 if DEBUG_AI:
                     print(f"🧹 Cleaned caption: {clean_caption[:100]}{'...' if len(clean_caption) > 100 else ''}")
                 
@@ -615,6 +655,41 @@ class EmbodiedAI:
 
                     # Create sentence-based chunks (like live captioning)
                     self.subtitle_chunks = self._create_smart_chunks(clean_caption)
+
+                    # Remove consecutive duplicate chunks within this caption
+                    if self.subtitle_chunks:
+                        deduped_chunks = []
+                        last_norm = None
+                        for chunk in self.subtitle_chunks:
+                            normalized = self._normalize_chunk_text(chunk)
+                            if not normalized:
+                                continue
+                            if normalized == last_norm:
+                                continue
+                            deduped_chunks.append(chunk)
+                            last_norm = normalized
+                        if deduped_chunks:
+                            self.subtitle_chunks = deduped_chunks
+
+                    # Skip chunks that just played in the previous caption
+                    if self.subtitle_chunks:
+                        recent_norms = self.recent_spoken_chunks[-3:] if self.recent_spoken_chunks else []
+                        filtered_chunks = []
+                        for chunk in self.subtitle_chunks:
+                            normalized = self._normalize_chunk_text(chunk)
+                            if not normalized:
+                                continue
+                            if normalized in recent_norms:
+                                if DEBUG_AI:
+                                    print(f"⚠️ Skipping recently spoken chunk: '{chunk}'")
+                                continue
+                            filtered_chunks.append(chunk)
+                        if filtered_chunks:
+                            self.subtitle_chunks = filtered_chunks
+                        else:
+                            if DEBUG_AI:
+                                print("⚠️ Caption skipped entirely (chunks already spoken).")
+                            return
 
                     # DEBUG: Print all chunks that will be spoken
                     if DEBUG_AI:
@@ -673,6 +748,7 @@ class EmbodiedAI:
                                             self.chunk_ready_flags[0] = True
                                             # Reset timer NOW (when jaw actually moves)
                                             self.last_chunk_change_time = time.time()
+                                            self._remember_spoken_chunk(chunk_0_text)
 
                             # Callback when chunk 0 finishes - speak chunk 1
                             def on_chunk_0_finished():
@@ -698,6 +774,20 @@ class EmbodiedAI:
                 else:
                     if DEBUG_AI:
                         print(f"❌ No thermal printer available")
+            else:
+                if DEBUG_AI:
+                    print("🤫 AI remained silent - extending pause before next query")
+                self.last_ai_process_time = time.time()
+                if not self.in_silence_period:
+                    print()
+                    self.in_silence_period = True
+                    self.silence_start_time = time.time()
+                    if self.subtitle_projector:
+                        try:
+                            self.subtitle_projector.clear()
+                        except Exception as e:
+                            if DEBUG_AI:
+                                print(f"⚠️ Projector clear error during silence: {e}")
         
         except Exception as e:
             if DEBUG_AI:
@@ -780,6 +870,7 @@ class EmbodiedAI:
                     if next_idx < len(self.chunk_ready_flags):
                         self.chunk_ready_flags[next_idx] = True
                         self.last_chunk_change_time = time.time()
+                        self._remember_spoken_chunk(chunk_text_for_callback)
 
         def on_finished():
             if self.caption_version != expected_version:
@@ -815,6 +906,13 @@ class EmbodiedAI:
         if not self.voice_system or not text:
             return
 
+        bounded_text = self._truncate_to_word_limit(text, self.max_caption_words)
+        if not bounded_text:
+            return
+
+        speech_word_count = len(bounded_text.split())
+        effective_word_count = total_caption_words or speech_word_count
+
         def speak_worker():
             try:
                 # BEFORE speaking, check if caption is still current (abort if new caption arrived)
@@ -826,13 +924,13 @@ class EmbodiedAI:
                 emotion_speed, emotion_pitch = self._get_emotional_voice_params()
 
                 # If this is part of a verbose caption, speed up further
-                if total_caption_words and total_caption_words > 30:
+                if effective_word_count and effective_word_count > 30:
                     speed = int(emotion_speed * 1.2) if emotion_speed else None
                 else:
                     speed = emotion_speed
 
                 # Use emotional variations with callbacks
-                self.voice_system.speak(text, speed=speed, pitch=emotion_pitch, on_start_callback=on_start_callback, on_end_callback=on_end_callback)
+                self.voice_system.speak(bounded_text, speed=speed, pitch=emotion_pitch, on_start_callback=on_start_callback, on_end_callback=on_end_callback)
                 # Lip sync happens automatically via audio monitoring
             except Exception as e:
                 if DEBUG_AI:
@@ -845,6 +943,10 @@ class EmbodiedAI:
     def _speak_urgent_reaction(self, text):
         """Speak urgent reaction immediately (bypasses chunking, simple TTS)"""
         if not self.voice_system or not text:
+            return
+
+        text = self._truncate_to_word_limit(text, self.max_caption_words)
+        if not text:
             return
 
         if DEBUG_AI:
