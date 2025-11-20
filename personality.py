@@ -1425,6 +1425,7 @@ Output: Brief first-person thought (10-20 words), natural and present, mid-thoug
                 has_memories = (hasattr(self.memory_ref, 'episodic_memories') and
                                len(self.memory_ref.episodic_memories) > 0)
 
+                # Default repetition flag; may be flipped later when we add guidance
                 repetition_active = False
 
                 # Build task directive based on context (simpler "Internal monologue" style)
@@ -1502,8 +1503,7 @@ Output: Brief first-person thought (10-20 words), natural and present, mid-thoug
                         temporal_narrative = f"\n{narrative_ctx}"
 
             # Build user prompt - clear separation of context vs task
-            # CRITICAL ORDER: Established facts BEFORE image so they anchor understanding
-            # Include last 3 thoughts as a continuous thread
+            # Keep context lean: only the thread tail, minimal state, and presence/memory hints
             thought_context = self._format_thought_thread(recent_thoughts)
 
             stasis_minutes = 0
@@ -1518,7 +1518,7 @@ Output: Brief first-person thought (10-20 words), natural and present, mid-thoug
                 )
 
             context_block = f"""{thought_context}
- {temporal_awareness} {context_line}{presence_context_line}{memory_context_line}{memory_line}{temporal_narrative}{focus_exploration_context}{scene_duration_line}
+{presence_context_line}{memory_line}
 Current state: {full_context}"""
             context_block += "\nMemory check: Treat recollections as memories only, and describe objects strictly based on what your eyes see right now."
 
@@ -1544,6 +1544,7 @@ Current state: {full_context}"""
 
             if repetition_guidance:
                 repetition_active = True
+                repetition_guidance += "\nTemporarily avoid: curious/curiosity, in this cluttered workshop, the room filled with creative minds."
                 context_block += f"{repetition_guidance}"
 
             context_block += "\nKeep this next thought to a single short sentence. If nothing genuinely new appears, it's fine to simply reply with \'...\'."
@@ -1551,6 +1552,9 @@ Current state: {full_context}"""
             motivation_line = self._build_motivation_prompt_line()
             if motivation_line:
                 context_block += f"\n{motivation_line}"
+
+            if repetition_active and not thought_is_incomplete:
+                task_directive = "Internal monologue (pick one new sensory detail or reply with '...'):"
 
             if not self.awakening_done:
                 user_prompt = self._build_awakening_prompt()
@@ -1603,6 +1607,16 @@ Internal monologue (continue):"""
 [What I'm seeing now]{person_visual_reminder}
 
 {task_directive}{task_suffix}"""
+
+                if repetition_active:
+                    gen_params['max_tokens'] = min(
+                        gen_params.get('max_tokens', MAX_THOUGHT_TOKENS),
+                        14,
+                        self.current_token_limit,
+                        MAX_THOUGHT_TOKENS
+                    )
+                    if 'temperature' in gen_params:
+                        gen_params['temperature'] = max(0.65, min(gen_params['temperature'], 0.9))
 
             if DEBUG_AI:
                 print(f"System prompt:\n{system_prompt}\n")
@@ -2570,7 +2584,7 @@ Internal monologue (continue):"""
         if not cleaned:
             return "First feeling already forming. Continue it without reintroducing the scene."
 
-        recent = cleaned[-3:]
+        recent = cleaned[-2:]
         paragraph_tail = " ".join(recent).strip()
         if not paragraph_tail:
             return "A thought is formingâ€”continue it without restarting the scene."
