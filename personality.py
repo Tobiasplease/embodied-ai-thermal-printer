@@ -1522,6 +1522,7 @@ Output: Brief first-person thought (10-20 words), natural and present, mid-thoug
 Current state: {full_context}"""
             context_block += "\nMemory check: Treat recollections as memories only, and describe objects strictly based on what your eyes see right now."
 
+            repetition_active = False
             repetition_guidance = ""
             overused_phrases = []
             if len(self.recent_responses) >= 3:
