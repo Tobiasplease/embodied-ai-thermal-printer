@@ -1548,7 +1548,7 @@ Current state: {full_context}"""
                 repetition_guidance += "\nTemporarily avoid: curious/curiosity, in this cluttered workshop, the room filled with creative minds."
                 context_block += f"{repetition_guidance}"
 
-            context_block += "\nKeep this next thought to a single short sentence. If nothing genuinely new appears, it's fine to simply reply with \'...\'."
+            context_block += "\nKeep this next thought to a single short sentence. If nothing genuinely new appears, stay quiet instead of filling with dots."
 
             motivation_line = self._build_motivation_prompt_line()
             if motivation_line:
@@ -1636,6 +1636,9 @@ Internal monologue (continue):"""
 
             if response:
                 response = self._ensure_complete_sentence(response)
+                # Treat pure ellipsis as intentional silence
+                if response.strip() in {"...", "..", "."}:
+                    return None
 
             if not response or not response.strip():
                 return None
