@@ -1517,9 +1517,12 @@ Output: Brief first-person thought (10-20 words), natural and present, mid-thoug
                     "Let that passage of time color what you notice next."
                 )
 
+            import re
+            full_context_clean = re.sub(r'(?i)\\bfeeling\\s+', '', full_context).strip(", ").strip()
+
             context_block = f"""{thought_context}
 {presence_context_line}{memory_line}
-Current state: {full_context}"""
+Current state: {full_context_clean}"""
             context_block += "\nMemory check: Treat recollections as memories only, and describe objects strictly based on what your eyes see right now."
 
             repetition_active = False
@@ -2593,7 +2596,11 @@ Internal monologue (continue):"""
         if not cleaned:
             return "First feeling already forming. Continue it without reintroducing the scene."
 
+        # Keep last 3 lines but strip habitual "feeling " starters to avoid priming
+        import re
         recent = cleaned[-3:]
+        recent = [re.sub(r'(?i)^feeling\\s+', '', r).strip() for r in recent]
+        recent = [r for r in recent if r]
         if not recent:
             return "A thought is forming—continue it without restarting the scene."
 
@@ -2603,7 +2610,7 @@ Internal monologue (continue):"""
 
         return (
             f"{stitched}\n"
-            "Continue in the same breath without restarting; one short first-person sentence."
+            "Continue the same line without restarting or summarizing; one short first-person sentence."
         )
 
     def _build_memory_hint_for_awakening(self):
