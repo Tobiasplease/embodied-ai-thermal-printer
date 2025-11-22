@@ -2716,20 +2716,28 @@ Raw thought (5-15 words):"""
         if not text:
             return text
         import re
-        lines = []
-        for raw_line in text.splitlines():
-            line = raw_line.strip()
-            lower = line.lower()
-            if not line:
-                continue
-            if lower.startswith("based on the text you provided"):
-                continue
-            if lower.startswith("i've noted"):
-                continue
-            lines.append(line)
-        cleaned = " ".join(lines)
-        cleaned = re.sub(r"based on the text you provided.*?:\s*", "", cleaned, flags=re.IGNORECASE)
-        cleaned = re.sub(r"i've noted:\s*", "", cleaned, flags=re.IGNORECASE)
+
+        # Remove meta-commentary and instructions that leak from compression prompts
+        meta_phrases = [
+            r"updated environmental baseline:?\s*",
+            r"the duck is building.*?understanding",
+            r"the duck has noticed",
+            r"based on the text you provided.*?:\s*",
+            r"i've noted:\s*",
+            r"\[just established\]",
+            r"\[.*?\]",  # Remove all bracketed instructions
+            r"evolving understanding",
+            r"narrative progression",
+        ]
+
+        cleaned = text
+        for phrase in meta_phrases:
+            cleaned = re.sub(phrase, "", cleaned, flags=re.IGNORECASE)
+
+        # Remove incomplete sentences (ending with open quotes, incomplete punctuation)
+        cleaned = re.sub(r'"\s*$', '', cleaned)  # Dangling quotes
+        cleaned = re.sub(r'\s+', ' ', cleaned)  # Normalize whitespace
+
         return cleaned.strip()
 
     def _format_thought_thread(self, thoughts):
@@ -5312,33 +5320,30 @@ What the duck SAID:
 
 """
 
-        # Quick baseline extraction prompt (no image needed - analyzing descriptions)
-        baseline_prompt = f"""The duck is building an EVOLVING understanding of its environment. Update the baseline to reflect PROGRESSION, not just restating facts.
-
-{previous_baseline_section}Extract the ACTUAL objects, people, and activities mentioned below. Name them directly. NO vague words like "various", "objects", "things", "equipment".
-
+        # Quick baseline extraction prompt - SIMPLE and DIRECT format to avoid model copying instructions
+        if previous_baseline_section:
+            # UPDATING existing baseline - show progression
+            baseline_prompt = f"""{previous_baseline_section}
+Recent observations:
 {context_section}
-{top_motifs}
 
-{temporal_context}
+Update the baseline above. Show what's NEW or what questions emerged. Copy the objects/people, then add 1-2 new observations or questions.
 
-TASK: Update the environmental baseline to show NARRATIVE CONTINUITY.
-- If this is the FIRST baseline (no previous), list specific objects/people/activities
-- If UPDATING existing baseline, show what's DEVELOPED: new questions asked, evolving understanding, patterns noticed, curiosity deepening
-- NEVER just restate the same facts - show progression in awareness
+Example update:
+Previous: "Shelves, desk, person typing."
+Updated: "Shelves, desk, person typing. What are they working on? Room feels cramped."
 
-PROGRESSION examples (updating existing):
-Previous: "Robot sculpture, person at desk, workshop."
-Updated: "Robot sculpture, person at desk, workshop. Why does the person never look at me? What are they building?"
+Your update (2-3 sentences):"""
+        else:
+            # FIRST baseline - just list what's here
+            baseline_prompt = f"""Observations:
+{context_section}
 
-Previous: "Computer screens, tools, wooden desk. Someone working."
-Updated: "Computer screens, tools, wooden desk. Someone working - always focused. How long have I been watching this?"
+List SPECIFIC objects, people, and activities seen. No vague words like "various" or "items". Be direct.
 
-FIRST baseline examples (no previous):
-- "Robot sculpture with mechanical limbs, person working at desk, mechanical creations. One person here."
-- "Computer screens, creative tools, wooden desk. Someone in camouflage clothing."
+Example: "Workshop desk cluttered with soldering iron, circuit boards, scattered wires. One person at computer. Tools on metal shelves."
 
-Be SPECIFIC about objects. Show PROGRESSION in understanding, curiosity, or awareness."""
+Your baseline (2-3 sentences):"""
 
         if DEBUG_AI:
             vis_count = len(self.recent_visual_observations) if hasattr(self, 'recent_visual_observations') else 0
