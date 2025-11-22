@@ -44,14 +44,12 @@ from config import (
     SUBTITLE_PROJECTOR_ENABLED, SUBTITLE_PROJECTOR_FONT_SIZE, SUBTITLE_PROJECTOR_COLOR
 )
 
-MAX_CAPTION_WORDS = 24  # Hard cap for spoken thoughts to enforce brevity
-
 # Import lip sync FIRST (optional) - direct audio version
 if LIPSYNC_ENABLED:
     try:
         from lipsync_direct_audio import DirectAudioLipSync
     except ImportError as e:
-        print(f"⚠️ Lip sync not available: {e}")
+        print(f"[WARN] Lip sync not available: {e}")
         LIPSYNC_ENABLED = False
 
 # Import voice system (optional)
@@ -72,7 +70,7 @@ if VOICE_ENABLED:
             from voice import VoiceSystem
             VOICE_AVAILABLE = True
     except ImportError as e:
-        print(f"⚠️ Voice system not available: {e}")
+        print(f"[WARN] Voice system not available: {e}")
         VOICE_AVAILABLE = False
 
 # Import subtitle projector (optional)
@@ -82,7 +80,7 @@ if SUBTITLE_PROJECTOR_ENABLED:
         from subtitle_projector import SubtitleProjectorClient
         PROJECTOR_AVAILABLE = True
     except ImportError as e:
-        print(f"⚠️ Subtitle projector not available: {e}")
+        print(f"[WARN] Subtitle projector not available: {e}")
         PROJECTOR_AVAILABLE = False
 
 def clear_print_queue_preemptive():
@@ -91,7 +89,7 @@ def clear_print_queue_preemptive():
         import subprocess
         import os
         import sys
-        print("🗑️ Aggressively clearing Windows print spooler...")
+        print("[TRASH] Aggressively clearing Windows print spooler...")
         
         # Create a batch file to run as admin
         batch_content = '''
@@ -111,7 +109,7 @@ echo Print spooler cleared successfully!
             f.write(batch_content)
         
         # Run batch file with admin privileges using runas
-        print("🔐 Running spooler clear with admin privileges...")
+        print("[LOCK] Running spooler clear with admin privileges...")
         try:
             # Method 1: Try to run with elevated privileges
             result = subprocess.run([
@@ -120,16 +118,16 @@ echo Print spooler cleared successfully!
             ], capture_output=True, timeout=15, text=True)
             
             if result.returncode == 0:
-                print("✅ Print spooler cleared with admin privileges")
+                print("[OK] Print spooler cleared with admin privileges")
             else:
                 raise Exception("Admin elevation failed")
                 
         except Exception:
             # Method 2: Fallback - try without elevation
-            print("⚠️ Admin elevation failed, trying without privileges...")
+            print("[WARN] Admin elevation failed, trying without privileges...")
             subprocess.run(['net', 'stop', 'spooler'], capture_output=True, shell=True)
             subprocess.run(['net', 'start', 'spooler'], capture_output=True, shell=True)
-            print("✅ Print spooler restarted (limited permissions)")
+            print("[OK] Print spooler restarted (limited permissions)")
         
         # Clean up batch file
         try:
@@ -138,8 +136,8 @@ echo Print spooler cleared successfully!
             pass
             
     except Exception as e:
-        print(f"⚠️ Could not clear print queue: {e}")
-        print("💡 Manual solution: Run as Administrator and execute:")
+        print(f"[WARN] Could not clear print queue: {e}")
+        print("[LIGHT] Manual solution: Run as Administrator and execute:")
         print("   net stop spooler && del /q C:\\Windows\\System32\\spool\\PRINTERS\\*.* && net start spooler")
 
 class UrgentReactionQueue:
@@ -198,8 +196,7 @@ class EmbodiedAI:
         self.voice_system = None
         self.lipsync = None
         self.subtitle_projector = None
-        self.max_caption_words = MAX_CAPTION_WORDS
-        
+
         # Timing controls - avoid threading issues
         self.last_ai_process_time = 0
         self.last_motor_update_time = 0
@@ -245,29 +242,15 @@ class EmbodiedAI:
         signal.signal(signal.SIGTERM, self._signal_handler)
         
         if VERBOSE_OUTPUT:
-            print("🤖 Embodied AI v2 initialized")
+            print("[BOT] Embodied AI v2 initialized")
     
     def _signal_handler(self, signum, frame):
         """Handle shutdown signals gracefully"""
         if not getattr(self, "signals_armed", False):
             return  # Ignore early signals during startup
-        print(f"\n🛑 Shutdown signal received ({signum}ö")
+        print(f"\n[STOP] Shutdown signal received ({signum}ö")
         self.shutdown()
         sys.exit(0)
-
-    def _truncate_to_word_limit(self, text, limit):
-        """Trim text to a maximum number of words while keeping punctuation natural."""
-        if not text or not limit:
-            return text
-
-        words = text.split()
-        if len(words) <= limit:
-            return text
-
-        trimmed = ' '.join(words[:limit]).rstrip(",;")
-        if trimmed and trimmed[-1] not in ".?!…":
-            trimmed += "..."
-        return trimmed
 
     def _normalize_chunk_text(self, text):
         """Normalize chunk text for dedupe comparisons."""
@@ -294,23 +277,23 @@ class EmbodiedAI:
             
             # Skip Camera class initialization - we'll use direct cv2 access
             if DEBUG_CAMERA:
-                print("📷 Will initialize camera directly in main loop...")
+                print("[CAMERA] Will initialize camera directly in main loop...")
             self.camera = None  # Don't use Camera class to avoid threading issues
             
             # Initialize AI personality
             if DEBUG_AI:
-                print("🧠 Initializing AI personality...")
+                print("[AI] Initializing AI personality...")
             self.personality = PersonalityAI()
 
             # Initialize thermal printer for subtitle printing
-            print("🖨️ Initializing thermal printer...")
+            print("[PRINT] Initializing thermal printer...")
             self.thermal_printer = create_thermal_printer(enabled=THERMAL_PRINTER_ENABLED)
             self.thermal_printer.start()
 
             # Initialize lip sync FIRST (if needed for eSpeak)
             if LIPSYNC_ENABLED and VOICE_ENGINE == "espeak":
                 try:
-                    print("👄 Initializing direct audio lip sync...")
+                    print("[LIPSYNC] Initializing direct audio lip sync...")
                     self.lipsync = DirectAudioLipSync(
                         port=LIPSYNC_PORT,
                         baud=LIPSYNC_BAUD,
@@ -319,18 +302,18 @@ class EmbodiedAI:
                         lightbulb_baud=LIGHTBULB_BAUD if LIGHTBULB_ENABLED else 9600,
                         lightbulb_enabled=LIGHTBULB_ENABLED
                     )
-                    print(f"✅ Direct audio lip sync ready ({LIPSYNC_PORT})")
+                    print(f"[OK] Direct audio lip sync ready ({LIPSYNC_PORT})")
                     if LIGHTBULB_ENABLED:
-                        print(f"💡 Lightbulb sync ready ({LIGHTBULB_PORT})")
+                        print(f"[LIGHT] Lightbulb sync ready ({LIGHTBULB_PORT})")
                 except Exception as e:
-                    print(f"⚠️ Lip sync disabled: {e}")
+                    print(f"[WARN] Lip sync disabled: {e}")
                     self.lipsync = None
             else:
                 self.lipsync = None
 
             # Initialize voice system (optional)
             if VOICE_ENABLED and VOICE_AVAILABLE:
-                print("🔊 Initializing voice system...")
+                print("[AUDIO] Initializing voice system...")
 
                 if VOICE_ENGINE == "espeak":
                     # eSpeak TTS with or without lip sync
@@ -344,7 +327,7 @@ class EmbodiedAI:
                                 use_whisper='+whisper' in ESPEAK_VOICE,
                                 lipsync_controller=self.lipsync
                             )
-                            print(f"✅ eSpeak TTS with lip sync ready (voice: {ESPEAK_VOICE}, {ESPEAK_SPEED} wpm)")
+                            print(f"[OK] eSpeak TTS with lip sync ready (voice: {ESPEAK_VOICE}, {ESPEAK_SPEED} wpm)")
                         else:
                             # Regular eSpeak without lip sync
                             self.voice_system = VoiceSystem(
@@ -353,13 +336,13 @@ class EmbodiedAI:
                                 pitch=ESPEAK_PITCH,
                                 use_whisper='+whisper' in ESPEAK_VOICE
                             )
-                            print(f"✅ eSpeak TTS ready (voice: {ESPEAK_VOICE}, {ESPEAK_SPEED} wpm)")
+                            print(f"[OK] eSpeak TTS ready (voice: {ESPEAK_VOICE}, {ESPEAK_SPEED} wpm)")
                         if VOICE_ALL_THOUGHTS:
-                            print("   🎙️ Voice mode: EVERY thought")
+                            print("   [VOICE] Voice mode: EVERY thought")
                         else:
-                            print(f"   🎙️ Voice mode: Every {VOICE_INTERVAL}s")
+                            print(f"   [VOICE] Voice mode: Every {VOICE_INTERVAL}s")
                     except Exception as e:
-                        print(f"⚠️ eSpeak TTS disabled: {e}")
+                        print(f"[WARN] eSpeak TTS disabled: {e}")
                         self.voice_system = None
                         
                 elif VOICE_ENGINE == "windows":
@@ -370,58 +353,58 @@ class EmbodiedAI:
                         self.voice_system.set_volume(WINDOWS_TTS_VOLUME)
                         self.voice_system.set_voice_gender(WINDOWS_TTS_GENDER)
                         
-                        print(f"✅ Windows TTS ready ({WINDOWS_TTS_GENDER}, {WINDOWS_TTS_RATE} wpm)")
+                        print(f"[OK] Windows TTS ready ({WINDOWS_TTS_GENDER}, {WINDOWS_TTS_RATE} wpm)")
                         if VOICE_ALL_THOUGHTS:
-                            print("   🎙️ Voice mode: EVERY thought")
+                            print("   [VOICE] Voice mode: EVERY thought")
                         else:
-                            print(f"   🎙️ Voice mode: Every {VOICE_INTERVAL}s")
+                            print(f"   [VOICE] Voice mode: Every {VOICE_INTERVAL}s")
                     else:
-                        print("⚠️ Windows TTS disabled (not available)")
+                        print("[WARN] Windows TTS disabled (not available)")
                         self.voice_system = None
                 else:
                     # Piper TTS
                     self.voice_system = VoiceSystem(VOICE_MODEL)
                     if self.voice_system.start():
-                        print(f"✅ Piper TTS ready (model: {VOICE_MODEL})")
+                        print(f"[OK] Piper TTS ready (model: {VOICE_MODEL})")
                         if VOICE_ALL_THOUGHTS:
-                            print("   🎙️ Voice mode: EVERY thought")
+                            print("   [VOICE] Voice mode: EVERY thought")
                         else:
-                            print(f"   🎙️ Voice mode: Every {VOICE_INTERVAL}s")
+                            print(f"   [VOICE] Voice mode: Every {VOICE_INTERVAL}s")
                     else:
-                        print("⚠️ Piper TTS disabled (not found)")
+                        print("[WARN] Piper TTS disabled (not found)")
                         self.voice_system = None
             else:
                 if VOICE_ENABLED:
-                    print("🔇 Voice system disabled (not available)")
+                    print("[MUTE] Voice system disabled (not available)")
                 else:
-                    print("🔇 Voice system disabled (config)")
+                    print("[MUTE] Voice system disabled (config)")
 
             # Initialize subtitle projector (optional)
             if SUBTITLE_PROJECTOR_ENABLED and PROJECTOR_AVAILABLE:
-                print("📽️ Initializing subtitle projector...")
+                print("[PROJECT] Initializing subtitle projector...")
                 try:
                     self.subtitle_projector = SubtitleProjectorClient()
-                    print("✅ Subtitle projector ready (fullscreen)")
+                    print("[OK] Subtitle projector ready (fullscreen)")
                 except Exception as e:
-                    print(f"⚠️ Subtitle projector disabled: {e}")
+                    print(f"[WARN] Subtitle projector disabled: {e}")
                     self.subtitle_projector = None
             else:
                 if SUBTITLE_PROJECTOR_ENABLED:
-                    print("📽️ Subtitle projector disabled (not available)")
+                    print("[PROJECT] Subtitle projector disabled (not available)")
                 else:
-                    print("📽️ Subtitle projector disabled (config)")
+                    print("[PROJECT] Subtitle projector disabled (config)")
 
             # Initialize hand control
             if DEBUG_MOTOR:
-                print("🤖 Initializing hand control...")
+                print("[BOT] Initializing hand control...")
             self.hand_control = HandControlInterface()            # Launch hand control process (optional)
             # self.hand_control.launch_hand_controller(headless=True)
 
-            print("✅ All components initialized successfully")
+            print("[OK] All components initialized successfully")
             return True
             
         except Exception as e:
-            print(f"❌ Initialization failed: {e}")
+            print(f"[ERROR] Initialization failed: {e}")
             if DEBUG_AI:
                 print(traceback.format_exc())
             return False
@@ -429,35 +412,35 @@ class EmbodiedAI:
     def run(self):
         """Main processing loop - single threaded, stable"""
         if not self.initialize():
-            print("❌ Initialization failed - cannot start")
+            print("[ERROR] Initialization failed - cannot start")
             return
         
         # Enable signal handling after successful init
         self.signals_armed = True
         self.running = True
-        print("🚀 Embodied AI v2 starting main loop...")
+        print("[STOP] Embodied AI v2 starting main loop...")
         
         try:
             # Direct VideoCapture using configured camera index
-            print(f"🎥 Opening Camera {CAMERA_INDEX} (0=built-in, 1=external)...")
+            print(f"[VIDEO] Opening Camera {CAMERA_INDEX} (0=built-in, 1=external)...")
             cap = cv2.VideoCapture(CAMERA_INDEX, cv2.CAP_DSHOW)
             cap.set(cv2.CAP_PROP_FRAME_WIDTH, CAMERA_WIDTH)
             cap.set(cv2.CAP_PROP_FRAME_HEIGHT, CAMERA_HEIGHT)
             
             actual_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
             actual_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-            print(f"✅ Camera {CAMERA_INDEX} initialized: {actual_width}x{actual_height}")
+            print(f"[OK] Camera {CAMERA_INDEX} initialized: {actual_width}x{actual_height}")
             
             # Let camera stabilize before first AI processing (exposure/focus adjustment)
-            print("🔥 Camera warming up (2 seconds)...")
+            print("[HOT] Camera warming up (2 seconds)...")
             warmup_start = time.time()
             while time.time() - warmup_start < 2.0:
                 ret, frame = cap.read()  # Keep reading frames during warmup
-                if SHOW_CAMERA_PREVIEW:
+                if ret and SHOW_CAMERA_PREVIEW:
                     display_frame = cv2.resize(frame, (PREVIEW_WIDTH, PREVIEW_HEIGHT))
-                    cv2.imshow("🤖 AI Inner Monologue", display_frame)
+                    cv2.imshow("[BOT] AI Inner Monologue", display_frame)
                     cv2.waitKey(1)
-            print("✅ Camera ready")
+            print("[OK] Camera ready")
             
             while self.running:
                 # EXACT machine.py pattern: ret, frame = cap.read() every loop
@@ -518,7 +501,7 @@ class EmbodiedAI:
                                 )
                                 self.last_urgent_reaction_time = current_time
                                 if DEBUG_AI:
-                                    print(f"🎯 Queued urgent reaction (urgency {presence_state.urgency_score:.2f}): {reaction[:40]}...")
+                                    print(f"[TARGET] Queued urgent reaction (urgency {presence_state.urgency_score:.2f}): {reaction[:40]}...")
 
                 # Calculate dynamic interval based on scene activity
                 self.current_ai_interval = self._calculate_dynamic_interval()
@@ -535,9 +518,9 @@ class EmbodiedAI:
                     if self.ai_processing_lock.acquire(blocking=False):  # Non-blocking acquire
                         if DEBUG_AI:
                             if force_ai_now:
-                                print(f"⚡ PERSON EVENT - forcing immediate AI at frame {self.frame_count}")
+                                print(f"[URGENT] PERSON EVENT - forcing immediate AI at frame {self.frame_count}")
                             else:
-                                print(f"🧠 Starting AI thread at frame {self.frame_count}")
+                                print(f"[AI] Starting AI thread at frame {self.frame_count}")
 
                         # Start daemon thread for AI processing (machine.py pattern)
                         # Pass person_events for context-aware instant captions
@@ -564,11 +547,11 @@ class EmbodiedAI:
                         display_frame = self._draw_live_caption_overlay(display_frame)
 
                     # DISPLAY (EXACT machine.py pattern)
-                    cv2.imshow("🤖 AI Inner Monologue", display_frame)
+                    cv2.imshow("[BOT] AI Inner Monologue", display_frame)
 
                     # Key handling (machine.py pattern)
                     if cv2.waitKey(1) & 0xFF == ord("q"):
-                        print("🛑 Quit key pressed")
+                        print("[STOP] Quit key pressed")
                         break
                 
                 # Motor updates on interval 
@@ -582,9 +565,9 @@ class EmbodiedAI:
                     self.last_status_time = current_time
                 
         except KeyboardInterrupt:
-            print("\n🛑 Keyboard interrupt received")
+            print("\n[STOP] Keyboard interrupt received")
         except Exception as e:
-            print(f"❌ Main loop error: {e}")
+            print(f"[ERROR] Main loop error: {e}")
             if DEBUG_AI:
                 print(traceback.format_exc())
         finally:
@@ -599,7 +582,7 @@ class EmbodiedAI:
         """AI processing in separate thread (EXACT machine.py pattern)"""
         try:
             if DEBUG_AI:
-                print(f"🧠 AI thread processing frame at {timestamp}")
+                print(f"[AI] AI thread processing frame at {timestamp}")
 
             # Pass person events to personality for instant captions
             if person_events:
@@ -611,13 +594,13 @@ class EmbodiedAI:
             
             if DEBUG_AI:
                 if response:
-                    print(f"🤖 AI processing complete - got response")
+                    print(f"[BOT] AI processing complete - got response")
                 else:
-                    print(f"🤫 AI choosing silence - no response")
+                    print(f"[STOP] AI choosing silence - no response")
             
             if response:
                 if DEBUG_AI:
-                    print(f"🎯 AI returned response: {response}")
+                    print(f"[TARGET] AI returned response: {response}")
                 
                 # Clean caption - remove debug markers and system text
                 import re
@@ -632,22 +615,19 @@ class EmbodiedAI:
                 # Remove any bracketed metadata (already done in personality.py but just in case)
                 clean_caption = re.sub(r'\[(?:Tone|Internal|System|Visual)[^\]]*\]', '', clean_caption, flags=re.IGNORECASE)
                 
-                # Remove debug markers that might slip through
-                clean_caption = re.sub(r'(🎯|🧹|🚫|🔄|✅|👁️|🧠|🎭|💭|🖨️|📝)', '', clean_caption)
+                # Remove debug markers that might slip through (escape brackets for literal match)
+                clean_caption = re.sub(r'(\[TARGET\]|\[CLEAN\]|\[BLOCKED\]|\[RETRY\]|\[OK\]|\[STOP\]|\[AI\]|\[THINK\]|\[PRINT\]|\[NOTE\])', '', clean_caption)
                 
+                # Replace TTS-unfriendly sounds
+                clean_caption = re.sub(r'\bMmm+\b', 'Aah', clean_caption, flags=re.IGNORECASE)
+                clean_caption = re.sub(r'\bHmm+\b', 'Huh', clean_caption, flags=re.IGNORECASE)
+
                 # Clean up extra whitespace
                 clean_caption = ' '.join(clean_caption.split())
                 clean_caption = clean_caption.strip()
-                
-                if self.max_caption_words:
-                    original_word_count = len(clean_caption.split())
-                    if original_word_count > self.max_caption_words:
-                        clean_caption = self._truncate_to_word_limit(clean_caption, self.max_caption_words)
-                        if DEBUG_AI:
-                            print(f"✂️ Trimmed caption from {original_word_count} to {len(clean_caption.split())} words")
-                
+
                 if DEBUG_AI:
-                    print(f"🧹 Cleaned caption: {clean_caption[:100]}{'...' if len(clean_caption) > 100 else ''}")
+                    print(f"[CLEAN] Cleaned caption: {clean_caption[:100]}{'...' if len(clean_caption) > 100 else ''}")
                 
                 # Thread-safe live captioning subtitle update
                 with self.subtitle_lock:
@@ -688,19 +668,19 @@ class EmbodiedAI:
                                 continue
                             if normalized in recent_norms:
                                 if DEBUG_AI:
-                                    print(f"⚠️ Skipping recently spoken chunk: '{chunk}'")
+                                    print(f"[WARN] Skipping recently spoken chunk: '{chunk}'")
                                 continue
                             filtered_chunks.append(chunk)
                         if filtered_chunks:
                             self.subtitle_chunks = filtered_chunks
                         else:
                             if DEBUG_AI:
-                                print("⚠️ Caption skipped entirely (chunks already spoken).")
+                                print("[WARN] Caption skipped entirely (chunks already spoken).")
                             return
 
                     # DEBUG: Print all chunks that will be spoken
                     if DEBUG_AI:
-                        print(f"📋 Created {len(self.subtitle_chunks)} chunks:")
+                        print(f"[LIST] Created {len(self.subtitle_chunks)} chunks:")
                         for i, chunk in enumerate(self.subtitle_chunks):
                             print(f"   Chunk {i}: '{chunk}'")
 
@@ -728,7 +708,7 @@ class EmbodiedAI:
                         # Speak first chunk with callback to mark it ready when jaw moves
                         if self.voice_system and VOICE_ALL_THOUGHTS:
                             if DEBUG_AI:
-                                print(f"🎙️ Speaking chunk 0/{len(self.subtitle_chunks)-1}: {first_chunk[:50]}...")
+                                print(f"[VOICE] Speaking chunk 0/{len(self.subtitle_chunks)-1}: {first_chunk[:50]}...")
 
                             # Capture version AND chunk text for closure
                             chunk_0_version = self.caption_version
@@ -738,15 +718,15 @@ class EmbodiedAI:
                             def on_jaw_movement_chunk_0():
                                 # Always update projector when jaw moves (show what's actually being spoken)
                                 # Even if caption version changed, the TTS is playing so user should see it
-                                print(f"📢 Chunk 0 jaw moved!")
+                                print(f"[ANNOUNCE] Chunk 0 jaw moved!")
                                 if self.subtitle_projector:
                                     try:
                                         self.subtitle_projector.display(chunk_0_text)
                                         if DEBUG_AI:
-                                            print(f"📽️ Projector: '{chunk_0_text[:50]}...'")
+                                            print(f"[PROJECT] Projector: '{chunk_0_text[:50]}...'")
                                     except Exception as e:
                                         if DEBUG_AI:
-                                            print(f"⚠️ Projector update error: {e}")
+                                            print(f"[WARN] Projector update error: {e}")
 
                                 # Only update internal state if this is still the current caption
                                 if self.caption_version == chunk_0_version:
@@ -761,7 +741,7 @@ class EmbodiedAI:
                             def on_chunk_0_finished():
                                 if self.caption_version != chunk_0_version:
                                     return  # Old caption - ignore
-                                print(f"\n✅ Chunk 0 finished!")
+                                print(f"\n[OK] Chunk 0 finished!")
                                 self._speak_next_chunk(0, chunk_0_version)
 
                             self._speak_async(first_chunk, total_caption_words=total_words,
@@ -771,19 +751,19 @@ class EmbodiedAI:
                 # Show FIRST CHUNK with timestamp - other chunks will print as they speak
                 timestamp_str = time.strftime("%H:%M:%S")
                 if self.subtitle_chunks:
-                    print(f"\n[{timestamp_str}] 💭 {self.subtitle_chunks[0]}", end="", flush=True)
+                    print(f"\n[{timestamp_str}] [THINK] {self.subtitle_chunks[0]}", end="", flush=True)
 
                 # Send to thermal printer for rhythmic printing
                 if self.thermal_printer:
                     if DEBUG_AI:
-                        print(f"🖨️ Sending to thermal printer: {clean_caption[:50]}...")
+                        print(f"[PRINT] Sending to thermal printer: {clean_caption[:50]}...")
                     self.thermal_printer.print_subtitle(clean_caption)
                 else:
                     if DEBUG_AI:
-                        print(f"❌ No thermal printer available")
+                        print(f"[ERROR] No thermal printer available")
             else:
                 if DEBUG_AI:
-                    print("🤫 AI remained silent - extending pause before next query")
+                    print("[STOP] AI remained silent - extending pause before next query")
                 self.last_ai_process_time = time.time()
                 if not self.in_silence_period:
                     print()
@@ -794,7 +774,7 @@ class EmbodiedAI:
                             self.subtitle_projector.clear()
                         except Exception as e:
                             if DEBUG_AI:
-                                print(f"⚠️ Projector clear error during silence: {e}")
+                                print(f"[WARN] Projector clear error during silence: {e}")
         
         except Exception as e:
             if DEBUG_AI:
@@ -804,7 +784,7 @@ class EmbodiedAI:
             # Always release the AI processing lock
             self.ai_processing_lock.release()
             if DEBUG_AI:
-                print(f"🔓 AI processing lock released")
+                print(f"[UNLOCK] AI processing lock released")
     
     def _get_emotional_voice_params(self):
         """Get speed/pitch variations based on current emotion"""
@@ -846,7 +826,7 @@ class EmbodiedAI:
                 return  # No more chunks
 
             self.current_chunk_index = next_idx
-            print(f"⏭️  Advanced to chunk {next_idx}")
+            print(f"[SKIP]  Advanced to chunk {next_idx}")
 
             chunk = self.subtitle_chunks[next_idx]
             current_ver = self.caption_version
@@ -861,15 +841,15 @@ class EmbodiedAI:
         def on_jaw_movement():
             # Always update projector when jaw moves (show what's actually being spoken)
             # Even if caption version changed, the TTS is playing so user should see it
-            print(f"\n📢 Chunk {next_idx} jaw moved!")
+            print(f"\n[ANNOUNCE] Chunk {next_idx} jaw moved!")
             if self.subtitle_projector:
                 try:
                     self.subtitle_projector.display(chunk_text_for_callback)
                     if DEBUG_AI:
-                        print(f"📽️ Projector: '{chunk_text_for_callback[:50]}...'")
+                        print(f"[PROJECT] Projector: '{chunk_text_for_callback[:50]}...'")
                 except Exception as e:
                     if DEBUG_AI:
-                        print(f"⚠️ Projector update error: {e}")
+                        print(f"[WARN] Projector update error: {e}")
 
             # Only update internal state if this is still the current caption
             if self.caption_version == expected_version:
@@ -882,14 +862,14 @@ class EmbodiedAI:
         def on_finished():
             if self.caption_version != expected_version:
                 return  # Old caption - ignore
-            print(f"\n✅ Chunk {next_idx} finished!")
+            print(f"\n[OK] Chunk {next_idx} finished!")
 
             # CHECK FOR URGENT REACTIONS BEFORE CONTINUING CHUNK CHAIN
             urgent = self.urgent_reaction_queue.get_if_urgent(threshold=0.6)
             if urgent:
                 # URGENT REACTION - interrupt caption chain
                 if DEBUG_AI:
-                    print(f"⚡ URGENT REACTION interrupting (urgency {urgent['urgency']:.2f}): {urgent['text']}")
+                    print(f"[URGENT] URGENT REACTION interrupting (urgency {urgent['urgency']:.2f}): {urgent['text']}")
 
                 # Increment version to abort old caption chain
                 with self.subtitle_lock:
@@ -913,11 +893,7 @@ class EmbodiedAI:
         if not self.voice_system or not text:
             return
 
-        bounded_text = self._truncate_to_word_limit(text, self.max_caption_words)
-        if not bounded_text:
-            return
-
-        speech_word_count = len(bounded_text.split())
+        speech_word_count = len(text.split())
         effective_word_count = total_caption_words or speech_word_count
 
         def speak_worker():
@@ -937,11 +913,11 @@ class EmbodiedAI:
                     speed = emotion_speed
 
                 # Use emotional variations with callbacks
-                self.voice_system.speak(bounded_text, speed=speed, pitch=emotion_pitch, on_start_callback=on_start_callback, on_end_callback=on_end_callback)
+                self.voice_system.speak(text, speed=speed, pitch=emotion_pitch, on_start_callback=on_start_callback, on_end_callback=on_end_callback)
                 # Lip sync happens automatically via audio monitoring
             except Exception as e:
                 if DEBUG_AI:
-                    print(f"⚠️ TTS error: {e}")
+                    print(f"[WARN] TTS error: {e}")
 
         # Start speaking in background thread
         thread = threading.Thread(target=speak_worker, daemon=True)
@@ -952,16 +928,12 @@ class EmbodiedAI:
         if not self.voice_system or not text:
             return
 
-        text = self._truncate_to_word_limit(text, self.max_caption_words)
-        if not text:
-            return
-
         if DEBUG_AI:
-            print(f"🔊 Speaking urgent reaction: {text}")
+            print(f"[AUDIO] Speaking urgent reaction: {text}")
 
         # Print to console
         timestamp_str = time.strftime("%H:%M:%S")
-        print(f"\n[{timestamp_str}] ⚡ {text}")
+        print(f"\n[{timestamp_str}] [URGENT] {text}")
 
         # ADD TO CONVERSATION HISTORY so next thought continues from this
         if self.personality:
@@ -985,7 +957,7 @@ class EmbodiedAI:
                 self.subtitle_projector.display(text)
             except Exception as e:
                 if DEBUG_AI:
-                    print(f"⚠️ Projector update error: {e}")
+                    print(f"[WARN] Projector update error: {e}")
 
         # Speak it (no callbacks, simple immediate speech)
         def speak_worker():
@@ -995,7 +967,7 @@ class EmbodiedAI:
                 self.voice_system.speak(text, speed=emotion_speed, pitch=emotion_pitch)
             except Exception as e:
                 if DEBUG_AI:
-                    print(f"⚠️ TTS error: {e}")
+                    print(f"[WARN] TTS error: {e}")
 
         # Start speaking in background thread
         thread = threading.Thread(target=speak_worker, daemon=True)
@@ -1087,15 +1059,15 @@ class EmbodiedAI:
                             self.subtitle_projector.clear()
                         except Exception as e:
                             if DEBUG_AI:
-                                print(f"⚠️ Projector clear error: {e}")
+                                print(f"[WARN] Projector clear error: {e}")
 
                     if DEBUG_CAMERA:
-                        print(f"🔇 Entering silence period...")
+                        print(f"[MUTE] Entering silence period...")
                 elif DEBUG_CAMERA:
                     # Show countdown timer (update in place)
                     silence_duration = current_time - self.silence_start_time
                     # No specific end time for silence, just show duration
-                    print(f"\r🔇 Silence: {silence_duration:.1f}s", end="", flush=True)
+                    print(f"\r[MUTE] Silence: {silence_duration:.1f}s", end="", flush=True)
                 return frame  # Show blank space - silence is important
             
             # Chunks now advance automatically when audio finishes (via on_chunk_finished callback)
@@ -1110,11 +1082,11 @@ class EmbodiedAI:
                 # This ensures immediate updates without waiting for display loop
 
                 if DEBUG_CAMERA:
-                    print(f"✅ Chunk {self.current_chunk_index} ready - displaying: {current_chunk[:50]}")
+                    print(f"[OK] Chunk {self.current_chunk_index} ready - displaying: {current_chunk[:50]}")
             else:
                 # Chunk not ready yet - jaw hasn't moved
                 if DEBUG_CAMERA and self.current_chunk_index < len(self.chunk_ready_flags):
-                    print(f"⏳ Chunk {self.current_chunk_index} not ready yet (flag={self.chunk_ready_flags[self.current_chunk_index]})")
+                    print(f"[WAIT] Chunk {self.current_chunk_index} not ready yet (flag={self.chunk_ready_flags[self.current_chunk_index]})")
                 return frame
 
         # Draw subtitle overlay (legacy-style: smaller, fitted background)
@@ -1241,7 +1213,7 @@ class EmbodiedAI:
 
         except Exception as e:
             if DEBUG_CAMERA:
-                print(f"⚠️ Person detection drawing error: {e}")
+                print(f"[WARN] Person detection drawing error: {e}")
             return frame
 
     def _update_motor_control(self, current_time):
@@ -1259,7 +1231,7 @@ class EmbodiedAI:
             success = self.hand_control.set_emotion(hand_emotion, mood_value)
             
             if success and DEBUG_MOTOR:
-                print(f"🤖 Motor updated: {hand_emotion} (mood: {mood_value:.2f})")
+                print(f"[BOT] Motor updated: {hand_emotion} (mood: {mood_value:.2f})")
                 
         except Exception as e:
             if DEBUG_MOTOR:
@@ -1371,11 +1343,11 @@ class EmbodiedAI:
             ai_status = self.personality.get_status() if self.personality else {}
             motor_status = self.hand_control.get_status() if self.hand_control else {}
             
-            print(f"\n📊 Status (Runtime: {runtime:.1f}s, FPS: {fps:.1f}):")
-            print(f"   🧠 AI: Mood={ai_status.get('mood', 0):.2f}, "
+            print(f"\n[STATS] Status (Runtime: {runtime:.1f}s, FPS: {fps:.1f}):")
+            print(f"   [AI] AI: Mood={ai_status.get('mood', 0):.2f}, "
                   f"Beliefs={ai_status.get('beliefs', 0)}, "
                   f"Observations={ai_status.get('observations', 0)}")
-            print(f"   🤖 Motor: {motor_status.get('current_emotion', 'unknown')}, "
+            print(f"   [BOT] Motor: {motor_status.get('current_emotion', 'unknown')}, "
                   f"Running={motor_status.get('is_running', False)}")
             
         except Exception as e:
@@ -1383,44 +1355,44 @@ class EmbodiedAI:
     
     def shutdown(self):
         """Clean shutdown of all components"""
-        print("🔄 Shutting down embodied AI...")
+        print("[RETRY] Shutting down embodied AI...")
         self.running = False
         
         try:
             # Cleanup components
             if self.personality:
                 self.personality.save_state()
-                print("💾 AI state saved")
+                print("[SAVE] AI state saved")
             
             if self.thermal_printer:
                 self.thermal_printer.stop()
-                print("🖨️ Thermal printer stopped")
+                print("[PRINT] Thermal printer stopped")
 
             if self.lipsync:
                 self.lipsync.stop()
-                print("👄 Lip sync stopped")
+                print("[LIPSYNC] Lip sync stopped")
 
             if self.voice_system:
                 self.voice_system.stop()
-                print("🔇 Voice system stopped")
+                print("[MUTE] Voice system stopped")
 
             if self.hand_control:
                 self.hand_control.cleanup()
-                print("🤖 Hand control cleaned up")
+                print("[BOT] Hand control cleaned up")
 
             # Camera handled directly in main loop
-            print("📷 Camera cleanup handled in main loop")
+            print("[CAMERA] Camera cleanup handled in main loop")
             
-            print("✅ Shutdown complete")
+            print("[OK] Shutdown complete")
             
         except Exception as e:
-            print(f"⚠️ Shutdown error: {e}")
+            print(f"[WARN] Shutdown error: {e}")
 
 
 def main():
     """Main entry point"""
-    print("🤖 Embodied AI v2 - Starting...")
-    print(f"📋 Config: AI interval={AI_PROCESS_INTERVAL}s, Camera={CAMERA_WIDTH}x{CAMERA_HEIGHT}")
+    print("[BOT] Embodied AI v2 - Starting...")
+    print(f"[LIST] Config: AI interval={AI_PROCESS_INTERVAL}s, Camera={CAMERA_WIDTH}x{CAMERA_HEIGHT}")
     
     # Create and run system
     ai_system = EmbodiedAI()

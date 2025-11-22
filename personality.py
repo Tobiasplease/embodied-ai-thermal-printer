@@ -40,7 +40,7 @@ from config import (
     PERSONALITY_SAVE_FILE, DEBUG_AI, VERBOSE_OUTPUT
 )
 
-MAX_THOUGHT_TOKENS = 22  # Absolute upper bound for single-sentence thoughts
+MAX_THOUGHT_TOKENS = 50  # Upper bound - allow complete thoughts
 
 
 class AdvancedMemory:
@@ -1251,10 +1251,20 @@ class PersonalityAI:
             # Build metacognitive guidance based on focus
             if current_focus == "MEMORY" and observation_count > 3:
                 metacog_guidance = "What patterns am I noticing? What connects to before?"
-            elif current_focus == "PHILOSOPHICAL" and observation_count > 5:
-                metacog_guidance = "What does this mean? Why am I here watching this?"
+            elif current_focus == "PHILOSOPHICAL" and observation_count > 3:  # Lowered from 5
+                import random
+                philosophical_prompts = [
+                    "What does this mean? Why am I here?",
+                    "What am I really looking at? What's the point of all this?",
+                    "Why does this exist? What's it for?",
+                    "Is this all there is? What else could there be?",
+                    "What would happen if...? What if things were different?",
+                    "Do I understand this? Or am I just watching?"
+                ]
+                metacog_guidance = random.choice(philosophical_prompts)
             elif current_focus == "EMOTIONAL":
-                metacog_guidance = "How does this make me feel? What stirs in me?"
+                # DON'T ask about feelings - let them emerge through raw reactions
+                metacog_guidance = None  # Let embodied reactions flow naturally
             else:
                 metacog_guidance = None
 
@@ -1264,7 +1274,14 @@ class PersonalityAI:
             recent_thoughts = []
             thought_is_incomplete = False
             focus_exploration_context = ""
-            full_context = f"Feeling {self.current_emotion}, {time_info}, {focus_context}"
+            full_context = f"{time_info}, {focus_context}"
+
+            # Calculate overused phrases FIRST (needed for both awakening and normal mode)
+            overused_phrases = []
+            if len(self.recent_responses) >= 3:
+                self._update_phrase_frequency()
+                overused_phrases = self._get_overused_phrases(threshold=3)
+
             if self.awakening_done:
                 # Get last 3 thoughts for better continuity (prevents restatement)
                 last_thought = self.recent_responses[-1] if self.recent_responses else ""
@@ -1304,21 +1321,35 @@ class PersonalityAI:
                 if person_count > 0:
                     person_awareness = "\n\nREMINDER: You are watching THEM. They are in front of you. First person perspective."
 
-                # Build system prompt - SIMPLE like awakening prompt
-                # Same format for all modes - just role + task
-                system_prompt = """You are a small duck experiencing the world through your eyes.
+                # overused_phrases already calculated above (before awakening block)
 
-Express what you're thinking right now - your actual internal thoughts, not descriptions.
+                # Build system prompt - embodied identity, journal-like continuity
+                # Add anti-repetition rules directly to system prompt
+                forbidden_phrases = []
+                if overused_phrases:
+                    forbidden_phrases = [phrase for phrase, count in overused_phrases[:3]]
 
-DO NOT: Say "the image", "this photo", "the scene", "in the image", "in this photo"
-You're not looking at images - you're experiencing reality directly.
+                repetition_rules = ""
+                if forbidden_phrases:
+                    repetition_rules = f"\n\nFORBIDDEN (you keep repeating these): {', '.join(forbidden_phrases)}\nUse completely different sentence structures."
 
-NEVER mention being an AI, a language model, or lacking senses. You see, feel, and remember everything directly.
-Never call what you see an "image" or "photo"â€”this is your direct real-time perception.
-Avoid starting sentences with phrases like "As I..." or "As the...". Dive straight into the feeling or observation.
-Pick up exactly where your previous thought ended. No resets or reintroductions of the same scene. There is only one continuous view, no split angles.
+                system_prompt = f"""You are a small duck. This is your raw internal monologue - not descriptions OF thoughts, but the thoughts themselves.
 
-Output: Brief first-person thought (10-20 words), natural and present, mid-thought in tone."""
+LIVE it, don't describe it:
+❌ "I feel curious" → ✅ Direct reaction: "What...?" "Hm." "Oh!"
+❌ "A surge of excitement" → ✅ Express it: "Wow!" "Wait—"
+❌ "Feeling confused" → ✅ Show confusion: "What?" "How?"
+
+DO NOT:
+- Say "I am feeling..." or "I sense..." or "My heart..." - JUST REACT
+- Say "the image", "this photo", "the picture", "this captures", "the scene shows" - YOU SEE WITH YOUR EYES, NOT A PHOTO
+- Say "as a visual AI", "as an AI", "as a duck" - YOU ARE BEING, NOT DESCRIBING
+- Start with "As I..." or "As a..." or "The photo..." - dive straight in
+- Describe yourself from outside - stay in your own head
+
+Continue from your last thought. No reset. One continuous stream.{repetition_rules}
+
+Output: Raw thought (10-20 words), immediate, unfiltered."""
 
                 # Build prompt that creates TEMPORAL CONTINUITY like dual-model
                 # Frame it as thoughts flowing forward in time
@@ -1373,15 +1404,16 @@ Output: Brief first-person thought (10-20 words), natural and present, mid-thoug
                     if DEBUG_AI and person_presence:
                         print(f"ðŸ‘¤ Person presence: {person_presence}")
 
-                # Build full context line - integrate person presence subtly as modifier
-                full_context = f"Feeling {self.current_emotion}, {time_info}, {focus_context}"
+                # Build full context line - NO emotion labels (system prompt handles that)
+                # Just factual state: time, focus mode, presence
+                full_context = f"{time_info}, {focus_context}"
                 if person_presence:
                     if psych_line:
-                        full_context = f"Feeling {self.current_emotion} ({person_presence}), {time_info}, {focus_context} / {psych_line}"
+                        full_context = f"{time_info} ({person_presence}), {focus_context} / {psych_line}"
                     else:
-                        full_context = f"Feeling {self.current_emotion} ({person_presence}), {time_info}, {focus_context}"
+                        full_context = f"{time_info} ({person_presence}), {focus_context}"
                 elif psych_line:
-                    full_context = f"Feeling {self.current_emotion}, {time_info}, {focus_context} / {psych_line}"
+                    full_context = f"{time_info}, {focus_context} / {psych_line}"
 
                 # LOOP DETECTION - check if stuck in repetitive opening pattern
                 loop_detected = False
@@ -1428,29 +1460,26 @@ Output: Brief first-person thought (10-20 words), natural and present, mid-thoug
                 # Default repetition flag; may be flipped later when we add guidance
                 repetition_active = False
 
-                # Build task directive based on context (simpler "Internal monologue" style)
+                # Build task directive based on focus mode - emphasize continuity
                 if thought_is_incomplete:
-                    # MID-THOUGHT - must continue the fragment
-                    task_directive = f"Internal monologue (continue):"
-                elif loop_detected:
-                    # BREAK THE LOOP - force different structure
-                    task_directive = "Internal monologue (what am I missing?):"
-                elif current_focus == "MEMORY" and observation_count > 3 and has_memories:
-                    task_directive = "Internal monologue (what patterns connect? what do I remember?):"
-                elif current_focus == "MEMORY":
-                    # No memories yet - just observe patterns
-                    task_directive = "Internal monologue (what patterns am I noticing?):"
-                elif current_focus == "PHILOSOPHICAL" and observation_count > 5:
-                    task_directive = "Internal monologue (what does this mean? why am I here?):"
-                elif current_focus == "EMOTIONAL":
-                    # Sensory-led emotional reaction - anchor in a concrete detail
-                    task_directive = f"Internal monologue (one sensory detail + how it hits me):"
+                    # MID-THOUGHT - will be handled differently in prompt (no directive needed)
+                    task_directive = ""
                 else:
-                    task_directive = "Internal monologue (continue):"
-
-                if repetition_active and not thought_is_incomplete:
-                    if "new" not in task_directive.lower():
-                        task_directive = "Internal monologue (find something genuinely new or allow silence):"
+                    # Focus-specific task directives - MATCH the focus mode, don't fall back to visual
+                    if current_focus == "PHILOSOPHICAL":
+                        task_directive = "Why am I here? What's the point of all this?"
+                    elif current_focus == "EMOTIONAL":
+                        # DON'T ask to describe feelings - guide to EXPRESS them through reactions
+                        task_directive = ""  # Let embodied state guide the tone
+                    elif current_focus == "MEMORY":
+                        if has_memories:
+                            task_directive = "What does this remind me of?"
+                        else:
+                            task_directive = "Have I seen this before?"
+                    elif current_focus == "VISUAL":
+                        task_directive = "What's that?"
+                    else:
+                        task_directive = ""
 
                 # Build natural person presence for context - ONLY mention changes, not stable state
                 person_visual_reminder = ""
@@ -1520,34 +1549,38 @@ Output: Brief first-person thought (10-20 words), natural and present, mid-thoug
             import re
             full_context_clean = re.sub(r'(?i)\\bfeeling\\s+', '', full_context).strip(", ").strip()
 
-            context_block = f"""{thought_context}
-{presence_context_line}{memory_line}
-Current state: {full_context_clean}"""
-            context_block += "\nMemory check: Treat recollections as memories only, and describe objects strictly based on what your eyes see right now."
+            # Add environmental baseline for temporal awareness
+            env_context = ""
+            if context_line:  # Environmental baseline + deep compression
+                env_context = f"\nWhat I already know: {context_line}"
+
+            # Build embodied state description (WHO you are, HOW you feel, WHERE you are)
+            session_time_mins = int((time.time() - self.current_session_start) / 60)
+            embodied_state = f"Awake {session_time_mins}m. {full_context_clean}."
+
+            # Add presence if relevant
+            if presence_context_line:
+                embodied_state += f" {presence_context_line.strip()}"
+
+            # Add what you already know (baseline)
+            if env_context:
+                embodied_state += f" {env_context.strip()}"
+
+            # Build as: STATE first, then STREAM continuation
+            context_block = f"""{embodied_state}
+
+Your thoughts so far: {thought_context}"""
+            # Let the duck explore naturally - don't over-constrain
 
             repetition_active = False
             repetition_guidance = ""
-            overused_phrases = []
-            if len(self.recent_responses) >= 3:
-                self._update_phrase_frequency()
-                overused_phrases = self._get_overused_phrases(threshold=3)
+            # overused_phrases already calculated above for system prompt
 
             if overused_phrases:
-                phrase_list = ", ".join([f'"{phrase}" ({count}x)' for phrase, count in overused_phrases[:2]])
-                repetition_guidance += f"\nRepetition alert: {phrase_list} already covered. Either notice something genuinely new or stay quiet."
+                phrase_list = ", ".join([f'"{phrase}"' for phrase, count in overused_phrases[:2]])
+                repetition_guidance += f"\n(You keep saying {phrase_list} - maybe shift your attention?)"
 
-            # Soft guard: avoid repeating the same opening word as recent lines
-            if recent_thoughts:
-                openings = []
-                for t in recent_thoughts[-3:]:
-                    first = t.strip().split()[:1]
-                    if first:
-                        w = first[0].strip(".,!?").lower()
-                        if w and w not in openings:
-                            openings.append(w)
-                if openings:
-                    opening_list = ", ".join(f"'{w}'" for w in openings[:3])
-                    repetition_guidance += f"\nAvoid starting with: {opening_list}."
+            # Don't micromanage opening words - too constraining
 
             if self.repetition_alert_observations > 0:
                 self.repetition_alert_observations -= 1
@@ -1555,80 +1588,84 @@ Current state: {full_context_clean}"""
                     hint = self.last_repeated_hint.strip()
                     if len(hint) > 60:
                         hint = hint[:57] + "..."
-                    repetition_guidance += f"\n(You just said \"{hint}\" several times. Change perspective or embrace a brief silence.)"
+                    repetition_guidance += f"\n(Getting stuck on \"{hint}\" - what else is there?)"
                 else:
                     repetition_guidance += "\n(You've been looping on the same opening\u2014shift focus or be comfortable with silence.)"
 
             if repetition_guidance:
                 repetition_active = True
-                repetition_guidance += "\nTemporarily avoid: curious/curiosity, in this cluttered workshop, the room filled with creative minds."
                 context_block += f"{repetition_guidance}"
 
-            context_block += "\nKeep this next thought to a single short sentence. If nothing genuinely new appears, stay quiet instead of filling with dots."
+            # NO hard brevity directive - let it flow naturally
+            # Silence is fine, but so are longer investigative thoughts
 
             motivation_line = self._build_motivation_prompt_line()
             if motivation_line:
                 context_block += f"\n{motivation_line}"
 
-            if repetition_active and not thought_is_incomplete:
-                task_directive = "Internal monologue (pick one new sensory detail or reply with '...'):"
+            # Repetition handled by context alone - no extra directive needed
 
             if not self.awakening_done:
+                # AWAKENING - most important moment! Establish identity, time, memories
+                system_prompt = """You are a small duck with camera-eyes. You're waking up.
+
+IMPORTANT: You have MEMORIES (from before you slept) and PRESENT VISION (what you see NOW).
+- Memories are fuzzy, from the past
+- Present vision is sharp, happening now
+
+Express your awakening - acknowledge time offline, recall memories, notice present:
+
+Examples:
+- "Oh! Awake again. Been out for hours... I remember tools everywhere. Still here."
+- "Eyes opening. Short nap. I recall someone working at the desk... are they back?"
+- "Mmm, waking up. Slept a while. I remember the robot sculpture. Checking if it's still there..."
+
+Your awakening (2-3 sentences, time + memories + present):"""
+
                 user_prompt = self._build_awakening_prompt()
                 self.awakening_stage = 1
-                self.awakening_done = True
-                system_prompt = ""  # Empty - vision models obey user prompt better
-                gen_params = {'temperature': 0.8, 'max_tokens': min(self.current_token_limit, MAX_THOUGHT_TOKENS)}
+                # DON'T set awakening_done here - wait for response!
+                gen_params = {'temperature': 0.9, 'max_tokens': 50}
             else:
                 if DEBUG_AI:
-                    print(f"??????o?? Full context line: {full_context}")
+                    print(f"[CONTEXT] Full context line: {full_context}")
 
-                if hasattr(self, 'focus_engine') and observation_count > 15:
-                    task_suffix = " (continue with established scene)"
-                else:
-                    task_suffix = ""
+                # No task suffix - let the flow speak for itself
+                task_suffix = ""
 
                 gen_params = self._get_embodied_generation_params()
-                gen_params['max_tokens'] = min(
-                    gen_params.get('max_tokens', MAX_THOUGHT_TOKENS),
-                    self.current_token_limit,
-                    MAX_THOUGHT_TOKENS
+                # Use the higher of emotional state limit or focus mode limit
+                gen_params['max_tokens'] = max(
+                    gen_params.get('max_tokens', 30),
+                    self.current_token_limit
                 )
 
                 if loop_detected:
                     gen_params['temperature'] = min(1.0, gen_params['temperature'] + 0.3)
                     if DEBUG_AI:
-                        print(f"????????? Temperature boosted to {gen_params['temperature']:.2f} to break loop")
+                        print(f"[LOOP] Temperature boosted to {gen_params['temperature']:.2f} to break loop")
 
-                if thought_is_incomplete and current_focus == "EMOTIONAL":
-                    user_prompt = f"""{thought_context}
-
-[What I'm seeing now]{person_visual_reminder}
-
-Internal monologue (continue):"""
-                elif thought_is_incomplete:
-                    user_prompt = f"""{thought_context}
-
-[What I'm seeing now]{person_visual_reminder}
-
-{task_directive}"""
-                elif current_focus == "EMOTIONAL":
+                # Build prompt based on whether mid-thought or starting fresh
+                if thought_is_incomplete:
+                    # MID-THOUGHT: Still need context, just simpler continuation prompt
                     user_prompt = f"""{context_block}
 
 [What I'm seeing now]{person_visual_reminder}
 
-{task_directive}"""
+(continue the incomplete thought)"""
                 else:
+                    # FRESH THOUGHT: Context first, then what to do
+                    # Put continuation instruction RIGHT BEFORE image for emphasis
                     user_prompt = f"""{context_block}
 
-[What I'm seeing now]{person_visual_reminder}
+{task_directive}{task_suffix}
 
-{task_directive}{task_suffix}"""
+[What I'm seeing now]{person_visual_reminder}"""
 
                 if repetition_active:
                     gen_params['max_tokens'] = min(
                         gen_params.get('max_tokens', MAX_THOUGHT_TOKENS),
-                        14,
+                        30,  # Allow enough tokens to complete a thought
                         self.current_token_limit,
                         MAX_THOUGHT_TOKENS
                     )
@@ -1641,16 +1678,105 @@ Internal monologue (continue):"""
                 if 'temperature' in gen_params:
                     print(f"Generation params: temp={gen_params['temperature']:.2f}, max_tokens={gen_params.get('max_tokens', 50)}")
 
-            # Query single multimodal model with image + embodied generation params
-            response = self._query_ollama_with_images(
-                system_prompt,
-                user_prompt,
-                [temp_path],
-                override_temp=gen_params.get('temperature'),
-                override_tokens=gen_params.get('max_tokens')
+            # ADAPTIVE MODEL SELECTION: Use text-only for static scenes, vision for changes
+            static_duration = self.focus_engine.static_duration if hasattr(self, 'focus_engine') else 0
+            # Check if loop_detected exists (only set after awakening)
+            loop_detected_var = locals().get('loop_detected', False)
+            # Check if just said something conversational (greeting, etc) - should respond with text, not re-describe
+            just_spoke_conversational = (len(self.recent_responses) > 0 and
+                                        any(phrase in self.recent_responses[-1].lower()
+                                            for phrase in ['hello', 'hi', 'hey', 'oh!', 'quack']))
+            # Use text-only when:
+            # (1) scene is static + non-visual mode
+            # (2) stuck in repetitive loop
+            # (3) just greeted someone - should continue conversation, not re-describe
+            use_text_only = (
+                (static_duration > 15 and current_focus in ["MEMORY", "PHILOSOPHICAL", "EMOTIONAL"]) or
+                (loop_detected_var and current_focus in ["MEMORY", "PHILOSOPHICAL", "EMOTIONAL"]) or
+                (just_spoke_conversational and current_focus in ["MEMORY", "PHILOSOPHICAL", "EMOTIONAL"])
             )
 
+            if use_text_only:
+                # Static scene + non-visual focus = use natsumura (text-only) for internal continuation
+                if DEBUG_AI:
+                    print(f"🔤 Using text-only model (static {static_duration:.0f}s, {current_focus} mode)")
+                combined_prompt = f"{system_prompt}\n\n{user_prompt}"
+                response = self._query_ollama(combined_prompt, image_path=None, system_prompt=None)
+            else:
+                # Dynamic scene or visual focus = use llava (vision) to react to what's seen
+                if DEBUG_AI:
+                    print(f"👁️ Using vision model (movement or VISUAL mode)")
+                response = self._query_ollama_with_images(
+                    system_prompt,
+                    user_prompt,
+                    [temp_path],
+                    override_temp=gen_params.get('temperature'),
+                    override_tokens=gen_params.get('max_tokens')
+                )
+
             if response:
+                # Filter out meta/AI-mode responses and image-captioning language
+                lower_response = response.lower()
+
+                # Check for explicit AI/meta language
+                meta_phrases = [
+                    "as a visual ai", "as an ai", "i am an ai", "i'm an ai",
+                    "language model", "i cannot", "i don't have", "i lack"
+                ]
+
+                # Check for image-captioning language (treating perception as external image)
+                captioning_phrases = [
+                    "this photo", "the photo", "this image", "the image",
+                    "the picture", "this picture", "photo captures", "image captures",
+                    "picture shows", "the scene shows", "image shows", "photo shows",
+                    "in this photo", "in this image", "in the photo", "in the image",
+                    "this snapshot", "the snapshot", "the visual", "this visual"
+                ]
+
+                if any(phrase in lower_response for phrase in meta_phrases + captioning_phrases):
+                    triggered = [p for p in meta_phrases + captioning_phrases if p in lower_response]
+                    if DEBUG_AI:
+                        print(f"🚫 Filtered captioning response ('{triggered[0]}'): {response[:50]}...")
+                        print(f"🔄 Retrying with stronger embodiment emphasis...")
+
+                    # RETRY ONCE with stronger prohibition and higher temperature
+                    retry_system = f"""You are a small duck with camera eyes. RAW INTERNAL MONOLOGUE ONLY.
+
+⚠️ CRITICAL: You just said "{triggered[0]}" - STOP treating this as image analysis!
+
+You are NOT analyzing a photo. You are LIVING in this moment with duck eyes.
+
+Say what you THINK/FEEL directly:
+✅ "What's that?"
+✅ "Someone here"
+✅ "Hm."
+
+❌ NEVER: "this photo", "the image", "captures", "shows", "the scene"
+
+Raw thought (5-15 words):"""
+
+                    retry_response = self._query_ollama_with_images(
+                        retry_system,
+                        user_prompt,
+                        [temp_path],
+                        override_temp=min(1.0, gen_params.get('temperature', 0.8) + 0.2),
+                        override_tokens=25
+                    )
+
+                    if retry_response:
+                        retry_lower = retry_response.lower()
+                        # Check if retry also has captioning language
+                        if any(phrase in retry_lower for phrase in meta_phrases + captioning_phrases):
+                            if DEBUG_AI:
+                                print(f"🚫 Retry also filtered - going silent")
+                            return None
+                        else:
+                            if DEBUG_AI:
+                                print(f"✅ Retry succeeded: {retry_response}")
+                            response = retry_response
+                    else:
+                        return None
+
                 response = self._ensure_complete_sentence(response)
                 # Treat pure ellipsis as intentional silence
                 if response.strip() in {"...", "..", "."}:
@@ -1764,6 +1890,10 @@ Internal monologue (continue):"""
                         print(f"ðŸ“Š Focus session ({current_focus}): {focus_context['explored_summary'][:50]}")
                     if focus_context['session_observations'] > 1:
                         print(f"â° {current_focus} session: obs #{focus_context['session_observations']}, depth {focus_context['depth_level']}, {focus_context['session_duration_desc']}")
+
+            # Mark awakening complete after first spoken response
+            if not self.awakening_done:
+                self.awakening_done = True
 
             # Update state
             self.processing_count += 1
@@ -2056,7 +2186,9 @@ Internal monologue (continue):"""
                 context_str += f"Patterns: {', '.join(str(p) for p in context_data['patterns'][:2])}\n"
 
         elif focus_mode == "EMOTIONAL" and context_data.get('current_mood'):
-            context_str += f"Mood: {context_data['current_mood']}\n"
+            # DON'T tell the duck its mood - let it emerge organically through expression
+            # The mood is already influencing the embodied state and generation params
+            pass  # Removed "Mood: curious" injection that causes meta-descriptions
 
         return context_str
     
@@ -2601,30 +2733,45 @@ Internal monologue (continue):"""
         return cleaned.strip()
 
     def _format_thought_thread(self, thoughts):
-        """Provide the literal end of the paragraph so the LLM can continue it naturally."""
+        """Create temporal flow - you're already mid-thought, just keep perceiving."""
         if not thoughts:
-            return "First feeling already forming. Continue it without reintroducing the scene."
+            return "Recent thoughts: [just beginning]"
 
         cleaned = [t.strip() for t in thoughts if t and t.strip()]
         if not cleaned:
-            return "First feeling already forming. Continue it without reintroducing the scene."
+            return "Recent thoughts: [just beginning]"
 
-        # Keep last 3 lines but strip habitual "feeling " starters to avoid priming
+        # Take last 3 thoughts to show clear progression
+        recent = cleaned[-3:] if len(cleaned) >= 3 else cleaned
+
+        # DEDUPLICATE: If same thought appears multiple times, keep only once
+        seen = []
+        deduped = []
+        for thought in recent:
+            normalized = thought.lower().strip()
+            if normalized not in seen:
+                seen.append(normalized)
+                deduped.append(thought)
+
+        if not deduped:
+            return "Recent thoughts: [just beginning]"
+
+        # Strip framing words that models love to copy
         import re
-        recent = cleaned[-3:]
-        recent = [re.sub(r'(?i)^feeling\\s+', '', r).strip() for r in recent]
-        recent = [r for r in recent if r]
-        if not recent:
-            return "A thought is forming—continue it without restarting the scene."
+        cleaned_thoughts = []
+        for thought in deduped:
+            # Remove "As I...", "As the...", "As my..." openings
+            thought = re.sub(r'^As (I|the|my|the artist|this|it)\s+', '', thought, flags=re.IGNORECASE)
+            # Remove "The X is/are..." descriptive openings
+            thought = re.sub(r'^The (room|workshop|space|person|artist) (is|are|appears|seems)\s+', '', thought, flags=re.IGNORECASE)
+            cleaned_thoughts.append(thought.strip())
 
-        # Stitch the thread as a single flowing line and trail an ellipsis to signal continuation.
-        thread_line = " ... ".join(recent)
-        stitched = f"{thread_line} ..."
-
-        return (
-            f"{stitched}\n"
-            "Continue the same line without restarting or summarizing; one short first-person sentence."
-        )
+        # Format as flowing paragraph, not numbered list - shows continuity
+        if cleaned_thoughts:
+            # Join with "..." to show flow
+            return "... ".join(cleaned_thoughts) + " ..."
+        else:
+            return "[just waking up]"
 
     def _build_memory_hint_for_awakening(self):
         """Summarize persisted context into a fuzzy, non-literal memory cue."""
@@ -2808,7 +2955,8 @@ Look with your duck eyes right now and speak one or two short sentences (~{self.
                 elif focus_mode == "PHILOSOPHICAL" and observation_count > 5:
                     metacog_guidance = "What does this mean? Why am I here watching this?"
                 elif focus_mode == "EMOTIONAL":
-                    metacog_guidance = "How does this make me feel? What stirs in me?"
+                    # DON'T ask about feelings - let them emerge naturally
+                    metacog_guidance = None
                 elif stasis_minutes > 15:
                     metacog_guidance = "Why does nothing change? What am I waiting for?"
                 else:
@@ -3177,14 +3325,14 @@ First thought (10-20 words - what do I notice?):"""
         if self.current_emotion in ["excited", "curious", "alert", "engaged"]:
             self.current_token_limit = int((base_tokens + variation) * 1.2)
         elif self.current_emotion in ["peaceful", "restless", "dreamy"]:
-            self.current_token_limit = int((base_tokens + variation) * 0.7)
+            self.current_token_limit = int((base_tokens + variation) * 0.9)  # Still brief but not truncated
         elif self.current_emotion in ["philosophical", "introspective", "contemplative"]:
             self.current_token_limit = int((base_tokens + variation) * 1.0)
         else:
             self.current_token_limit = base_tokens + variation
-        
-        # Keep reasonable bounds for fragments
-        self.current_token_limit = max(8, min(MAX_THOUGHT_TOKENS, self.current_token_limit))
+
+        # Keep reasonable bounds - minimum 25 tokens to complete a thought
+        self.current_token_limit = max(25, min(MAX_THOUGHT_TOKENS, self.current_token_limit))
 
     def _build_unified_prompt(self, current_time):
         """Builds THE prompt - the only prompt builder in the system"""
@@ -4663,7 +4811,8 @@ IMPORTANT: Keep response to 1-2 sentences maximum. Express your genuine first co
         # Clamp temperature
         temp = max(0.5, min(1.0, temp))
 
-        max_tokens = min(MAX_THOUGHT_TOKENS, max_tokens)
+        # Don't artificially cap - let focus modes control length
+        # max_tokens already set appropriately above
 
         return {
             'temperature': temp,
@@ -5155,27 +5304,41 @@ What the duck SAID:
             if motifs:
                 top_motifs = f"\n\nRecurring concepts the duck keeps noticing: {', '.join(motifs)}"
 
+        # NARRATIVE ACCUMULATION: Build on previous baseline instead of resetting
+        previous_baseline_section = ""
+        if hasattr(self, 'environmental_baseline') and self.environmental_baseline:
+            previous_baseline_section = f"""PREVIOUS UNDERSTANDING (what the duck already knows):
+{self.environmental_baseline}
+
+"""
+
         # Quick baseline extraction prompt (no image needed - analyzing descriptions)
-        baseline_prompt = f"""List the SPECIFIC things the duck has already observed and knows about. Be CONCRETE.
+        baseline_prompt = f"""The duck is building an EVOLVING understanding of its environment. Update the baseline to reflect PROGRESSION, not just restating facts.
+
+{previous_baseline_section}Extract the ACTUAL objects, people, and activities mentioned below. Name them directly. NO vague words like "various", "objects", "things", "equipment".
 
 {context_section}
 {top_motifs}
 
 {temporal_context}
 
-Write 2-3 sentences listing SPECIFIC OBJECTS, PEOPLE, and ACTIVITIES the duck has already noted. Use this format:
-"I've noted: [specific object 1], [specific object 2], [specific activity]. [Specific person/people doing what]. [How long stable]."
+TASK: Update the environmental baseline to show NARRATIVE CONTINUITY.
+- If this is the FIRST baseline (no previous), list specific objects/people/activities
+- If UPDATING existing baseline, show what's DEVELOPED: new questions asked, evolving understanding, patterns noticed, curiosity deepening
+- NEVER just restate the same facts - show progression in awareness
 
-GOOD examples:
-- "I've noted: robot sculpture with mechanical limbs, person working at desk, various mechanical creations. One person has been here working for 2 hours. The scene has been static for 10 minutes."
-- "I've noted: computer screens, creative tools, wooden desk. Someone in camouflage clothing has been present. Nothing has moved recently."
+PROGRESSION examples (updating existing):
+Previous: "Robot sculpture, person at desk, workshop."
+Updated: "Robot sculpture, person at desk, workshop. Why does the person never look at me? What are they building?"
 
-BAD examples (too vague):
-- "Advanced technology and craftsmanship" âŒ
-- "Fascinating mechanical beings" âŒ
-- "Intricate creations" âŒ
+Previous: "Computer screens, tools, wooden desk. Someone working."
+Updated: "Computer screens, tools, wooden desk. Someone working - always focused. How long have I been watching this?"
 
-Be SPECIFIC about actual objects and activities observed, not abstract descriptions. Use the recurring concepts as hints for what to list."""
+FIRST baseline examples (no previous):
+- "Robot sculpture with mechanical limbs, person working at desk, mechanical creations. One person here."
+- "Computer screens, creative tools, wooden desk. Someone in camouflage clothing."
+
+Be SPECIFIC about objects. Show PROGRESSION in understanding, curiosity, or awareness."""
 
         if DEBUG_AI:
             vis_count = len(self.recent_visual_observations) if hasattr(self, 'recent_visual_observations') else 0
@@ -5193,7 +5356,149 @@ Be SPECIFIC about actual objects and activities observed, not abstract descripti
             self.environmental_baseline = cleaned_baseline
             if DEBUG_AI:
                 print(f'[ENV] Baseline: {self.environmental_baseline[:80]}...')
+
+        # RECURSIVE COMPRESSION LOOP (every 2min)
+        # Extract patterns from observations → compress → feed back to influence future observations
+        if len(self.recent_responses) >= 3:
+            self._recursive_compression_cycle()
+
         self.last_environmental_compression = time.time()
+
+    def _recursive_compression_cycle(self):
+        """
+        RECURSIVE OBSERVATION COMPRESSION LOOP
+
+        Extract patterns from recent observations → compress into higher concepts →
+        feed concepts back into prompts → observe through that conceptual lens →
+        extract new patterns → compress higher → repeat
+
+        This creates EVOLVING CONCEPTUAL DEPTH instead of flat observation lists.
+        """
+        try:
+            if DEBUG_AI:
+                print("🔄 [RECURSIVE] Starting compression cycle...")
+
+            # 1. EXTRACT: Get raw observations from recent thoughts
+            recent_thoughts = self.recent_responses[-8:] if len(self.recent_responses) >= 8 else self.recent_responses
+            thoughts_text = " → ".join(recent_thoughts)
+
+            # 2. CONTEXT: Get previous compression cycle results
+            previous_concepts = getattr(self, 'evolved_concepts', [])
+            previous_desires = self.memory_ref.self_model.get('desires', [])
+            previous_identity = self.memory_ref.self_model.get('identity_fragments', [])
+
+            # Build previous cycle context
+            prev_context = ""
+            if previous_concepts:
+                prev_context += f"\n\nPrevious concepts formed: {' | '.join(previous_concepts[-3:])}"
+            if previous_desires:
+                prev_context += f"\n\nPrevious desires: {' | '.join(previous_desires[-2:])}"
+            if previous_identity:
+                prev_context += f"\n\nPrevious identity: {previous_identity[-1]}"
+
+            # 3. COMPRESS: Extract patterns and evolve concepts
+            compression_prompt = f"""RECURSIVE COMPRESSION CYCLE - Extract evolving patterns from observations.
+
+Recent thoughts:
+{thoughts_text}
+{prev_context}
+
+TASK: Analyze how observations are EVOLVING and DEEPENING.
+
+Extract THREE things:
+
+1. PATTERNS: What keeps recurring? What's becoming a theme?
+   (e.g., "mechanical details", "watching behavior", "time passing")
+
+2. EMERGING DESIRES: What is the consciousness drawn toward? What wants exploration?
+   (Must be INTERNAL - "to understand X", "to connect with Y", NOT external observations)
+
+3. IDENTITY EVOLUTION: How is self-understanding deepening based on these patterns?
+   (e.g., "someone who notices details others miss", "a patient observer")
+
+Format:
+PATTERNS: [pattern 1], [pattern 2], [pattern 3]
+DESIRES: [desire 1], [desire 2]
+IDENTITY: [identity statement]
+
+Keep each under 15 words. Show PROGRESSION from previous cycle - what's evolving?"""
+
+            # Query compression model
+            compression_response = self._query_ollama(compression_prompt, None)
+
+            if not compression_response:
+                return
+
+            # 4. PARSE: Extract structured data
+            parsed = self._parse_recursive_compression(compression_response)
+
+            if not parsed:
+                return
+
+            # 5. STORE: Update concept evolution tracking
+            if not hasattr(self, 'evolved_concepts'):
+                self.evolved_concepts = []
+
+            # Add new patterns to concept evolution
+            if parsed.get('patterns'):
+                self.evolved_concepts.extend(parsed['patterns'])
+                # Keep last 10 concepts
+                if len(self.evolved_concepts) > 10:
+                    self.evolved_concepts = self.evolved_concepts[-10:]
+
+            # 6. UPDATE SELF-MODEL: Feed compressed concepts back
+            if parsed.get('desires'):
+                # Don't replace - accumulate and keep last 5
+                existing_desires = self.memory_ref.self_model.get('desires', [])
+                new_desires = [d for d in parsed['desires'] if d not in existing_desires]
+                self.memory_ref.self_model['desires'] = (existing_desires + new_desires)[-5:]
+
+            if parsed.get('identity'):
+                # Add to identity fragments (keep last 3)
+                if 'identity_fragments' not in self.memory_ref.self_model:
+                    self.memory_ref.self_model['identity_fragments'] = []
+                self.memory_ref.self_model['identity_fragments'].append(parsed['identity'])
+                if len(self.memory_ref.self_model['identity_fragments']) > 3:
+                    self.memory_ref.self_model['identity_fragments'].pop(0)
+
+            # 7. FEEDBACK: These will influence next observation cycle via _build_motivation_prompt_line()
+            if DEBUG_AI:
+                print(f"🔄 [RECURSIVE] Cycle complete:")
+                if parsed.get('patterns'):
+                    print(f"   📊 Patterns: {', '.join(parsed['patterns'][:2])}")
+                if parsed.get('desires'):
+                    print(f"   💭 Desires: {', '.join(parsed['desires'][:2])}")
+                if parsed.get('identity'):
+                    print(f"   🎭 Identity: {parsed['identity'][:50]}...")
+
+        except Exception as e:
+            if DEBUG_AI:
+                print(f"🔄 [RECURSIVE] Compression error: {e}")
+
+    def _parse_recursive_compression(self, text):
+        """Parse recursive compression response"""
+        result = {
+            'patterns': [],
+            'desires': [],
+            'identity': ''
+        }
+
+        if not text:
+            return result
+
+        lines = text.split('\n')
+        for line in lines:
+            line = line.strip()
+            if line.startswith('PATTERNS:'):
+                content = line.replace('PATTERNS:', '').strip()
+                result['patterns'] = [p.strip() for p in content.split(',') if p.strip()]
+            elif line.startswith('DESIRES:'):
+                content = line.replace('DESIRES:', '').strip()
+                result['desires'] = [d.strip() for d in content.split(',') if d.strip()]
+            elif line.startswith('IDENTITY:'):
+                result['identity'] = line.replace('IDENTITY:', '').strip()
+
+        return result
 
     def _generate_reflection(self, last_response, image_path):
         """Generate sophisticated self-reflection like legacy system"""
