@@ -40,7 +40,7 @@ from config import (
     PERSONALITY_SAVE_FILE, DEBUG_AI, VERBOSE_OUTPUT
 )
 
-MAX_THOUGHT_TOKENS = 50  # Upper bound - allow complete thoughts
+MAX_THOUGHT_TOKENS = 60  # Upper bound - allow complete thoughts
 
 
 class AdvancedMemory:
@@ -4745,28 +4745,28 @@ IMPORTANT: Keep response to 1-2 sentences maximum. Express your genuine first co
         energy = state.get('energy_state', 'alert')
         duration = state.get('session_duration', 0)
 
-        # Base parameters - BRIEF thoughts (10-15 words = ~15-20 tokens)
+        # Base parameters - allow complete thoughts
         temp = 0.75
-        max_tokens = 20
+        max_tokens = 30
 
         # === FOCUS MODE shapes depth potential ===
         current_focus = getattr(self, 'current_focus', 'VISUAL')
 
         if current_focus == "PHILOSOPHICAL":
-            # Philosophical thought - allow some depth but stay grounded
-            max_tokens = 40
+            # Philosophical thought - allow depth for complex ideas
+            max_tokens = 60
             temp = 0.70
         elif current_focus == "MEMORY":
-            # Recollection - brief, direct
-            max_tokens = 35
+            # Recollection - allow enough for complete recall
+            max_tokens = 50
             temp = 0.75
         elif current_focus == "EMOTIONAL":
-            # Emotional - felt, not declared
-            max_tokens = 32
+            # Emotional - felt, not declared, but needs room to express
+            max_tokens = 50
             temp = 0.80
-        # VISUAL - immediate observations, BRIEF
+        # VISUAL - immediate observations
         else:
-            max_tokens = 30
+            max_tokens = 45
             temp = 0.80
 
         # === ATTENTION MODE modulates within focus ===

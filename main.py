@@ -486,22 +486,26 @@ class EmbodiedAI:
                         # Store for AI to use when processing
                         self.personality.last_activity_result = activity_result
 
-                    # GENERATE AND QUEUE URGENT REACTIONS based on presence state
-                    if presence_state:
+                    # GENERATE AND QUEUE URGENT REACTIONS based on ACTUAL EVENTS (not just high urgency)
+                    # Only generate when there's an actual arrival/departure/movement event
+                    if presence_state and (presence_state.just_arrived or presence_state.just_left or
+                                          (hasattr(presence_state, 'activity_changed') and presence_state.activity_changed)):
                         # Only queue reactions if enough time has passed (prevent spam)
                         time_since_last_reaction = current_time - self.last_urgent_reaction_time
 
-                        if presence_state.urgency_score > 0.6 and time_since_last_reaction > 2.0:
+                        # Reduced cooldown from 2.0s to 0.5s for more natural back-and-forth
+                        if time_since_last_reaction > 0.5:
                             reaction = self._generate_contextual_reaction(presence_state)
                             if reaction:
+                                urgency = presence_state.urgency_score if hasattr(presence_state, 'urgency_score') else 0.8
                                 self.urgent_reaction_queue.add_reaction(
                                     reaction,
-                                    presence_state.urgency_score,
+                                    urgency,
                                     context={'presence_duration': presence_state.presence_duration}
                                 )
                                 self.last_urgent_reaction_time = current_time
                                 if DEBUG_AI:
-                                    print(f"[TARGET] Queued urgent reaction (urgency {presence_state.urgency_score:.2f}): {reaction[:40]}...")
+                                    print(f"[TARGET] Queued contextual reaction: {reaction[:40]}...")
 
                 # Calculate dynamic interval based on scene activity
                 self.current_ai_interval = self._calculate_dynamic_interval()
@@ -1272,35 +1276,106 @@ class EmbodiedAI:
         except:
             return False
 
+    def _generate_contextual_reaction_llm(self, event_type, presence_state):
+        """Generate contextual reaction using LLM based on recent thought"""
+
+        # Get last thought for context
+        last_thought = "observing"
+        if self.personality and hasattr(self.personality, 'recent_responses') and self.personality.recent_responses:
+            last_thought = self.personality.recent_responses[-1]
+
+        # Build event description
+        events = {
+            "arrival": "someone just arrived",
+            "departure": "someone just left",
+            "movement": "they started moving"
+        }
+        event = events.get(event_type, "something changed")
+
+        # Generate contextual reaction (fast text-only model)
+        prompt = f"""You're a duck. You just thought: "{last_thought}"
+
+But now {event}!
+
+Raw immediate reaction (2-5 words only):"""
+
+        try:
+            # Use personality's query method for consistency
+            if self.personality:
+                # Use simple text generation (no special params - keep it fast)
+                import requests
+                from config import OLLAMA_URL, SUBCONSCIOUS_MODEL
+
+                data = {
+                    "model": SUBCONSCIOUS_MODEL,
+                    "prompt": prompt,
+                    "stream": False,
+                    "options": {
+                        "temperature": 0.9,
+                        "num_predict": 15
+                    }
+                }
+
+                response = requests.post(f"{OLLAMA_URL}/api/generate", json=data, timeout=10)
+                if response.status_code == 200:
+                    result = response.json()
+                    reaction = result.get('response', '').strip()
+
+                if reaction:
+                    # Clean and validate
+                    reaction = reaction.strip()
+                    # Only filter out explicit AI/meta language - keep personality quirks
+                    if any(bad in reaction.lower() for bad in ["as a duck", "as an ai", "i am an ai", "language model"]):
+                        if DEBUG_AI:
+                            print(f"[FILTER] Rejected meta AI response: {reaction[:50]}")
+                        return None
+                    return reaction
+        except Exception as e:
+            if DEBUG_AI:
+                print(f"[ERROR] Contextual reaction generation failed: {e}")
+
+        return None
+
     def _generate_contextual_reaction(self, presence_state):
-        """Generate contextual reaction based on presence state (not generic!)"""
+        """Generate contextual reaction based on presence state"""
         import random
 
-        # ARRIVAL reactions - natural conversation starters (no periods!)
+        # ARRIVAL reactions - generate contextually based on last thought
         if presence_state.just_arrived:
             if presence_state.presence_duration < 1.0:
-                # Just arrived this moment - use interjections that flow into conversation
-                return random.choice([
-                    "Oh",
-                    "Hello there",
-                    "Hi",
-                    "Hm"  # Changed from "Mm" - pronounces better
-                ])
+                # Just arrived this moment - generate contextual reaction
+                reaction = self._generate_contextual_reaction_llm("arrival", presence_state)
+                if reaction:
+                    return reaction
+                # Fallback to simple interjections if LLM fails
+                return random.choice(["Oh", "Hello there", "Hi", "Hm"])
             else:
                 # Already acknowledged - don't repeat
                 return None
 
-        # DEPARTURE reactions - keep these shorter, already established they were here
+        # DEPARTURE reactions - ENABLED (was disabled, now generates contextually)
         elif presence_state.just_left:
-            # Don't react to every flicker - only if they were present for a bit
-            # This reduces spam from person detector noise
-            return None  # Let visual system notice absence naturally
+            # Generate contextual departure reaction
+            reaction = self._generate_contextual_reaction_llm("departure", presence_state)
+            return reaction  # Returns None if LLM fails, which is fine
 
-        # MOVEMENT reactions - DISABLED
-        # Movement is better noticed naturally through visual prompts asking "what catches your attention"
-        # Explicit "Moving" reactions are too repetitive and break flow
-        # The activity detection still affects focus modes and response timing
-        return None  # Let visual system handle all movement naturally
+        # MOVEMENT reactions - SELECTIVE (only first movement after stillness)
+        elif presence_state.activity_description in ["moving", "moving around"]:
+            # Check if person was previously still (prevents spam)
+            was_still = getattr(self, 'person_was_still', True)
+            if was_still:
+                self.person_was_still = False
+                # React to first movement only
+                reaction = self._generate_contextual_reaction_llm("movement", presence_state)
+                return reaction
+            return None
+
+        # Reset stillness flag when person becomes still again
+        elif presence_state.activity_description == "still":
+            self.person_was_still = True
+            return None
+
+        return None
 
     def _calculate_dynamic_interval(self):
         """Calculate AI process interval based on activity detection"""
