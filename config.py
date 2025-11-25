@@ -47,9 +47,13 @@ OLLAMA_URL = "http://localhost:11434"
 SINGLE_MODEL_MODE = True  # Single multimodal model (LLaVA)
 
 # === DUAL-MODEL MODE (when SINGLE_MODEL_MODE = False) ===
-# Option 4: ULTRA LIGHT (fastest) - 3.5GB total ⭐ ACTIVE
+# Option 4: ULTRA LIGHT (fastest) - 3.5GB total
 OLLAMA_MODEL = "moondream:latest"  # 1.7GB vision - fast, occasional glitches
-SUBCONSCIOUS_MODEL = "smollm2:1.7b"  # 1.8GB language - very fast
+# SUBCONSCIOUS_MODEL = "smollm2:1.7b"  # 1.8GB language - very fast but low quality
+
+# === TEXT-ONLY INTROSPECTION MODEL (used in both modes) ===
+# Used for: non-visual focus modes (EMOTIONAL, MEMORY, PHILOSOPHICAL), deep compression
+SUBCONSCIOUS_MODEL = "Tohur/natsumura-storytelling-rp-llama-3.1:8b"  # 4.9GB - better personality ⭐ ACTIVE
 
 # Option 8: MINICPM-V + SMOLLM2 (better vision, fast language) - 7.3GB total (too slow)
 # OLLAMA_MODEL = "minicpm-v:8b"  # 5.5GB vision - more stable than moondream

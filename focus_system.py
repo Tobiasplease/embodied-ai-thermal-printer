@@ -82,12 +82,18 @@ class FocusEngine:
             'VISUAL': FocusSession(),
             'EMOTIONAL': FocusSession(),
             'MEMORY': FocusSession(),
-            'PHILOSOPHICAL': FocusSession()
+            'PHILOSOPHICAL': FocusSession(),
+            'PERSON': FocusSession()  # Brief person-observation mode
         }
         self.current_session = self.focus_sessions['VISUAL']
 
         # EXHAUSTION COOLDOWN: Prevent immediate return to exhausted focus
         self.recently_exhausted = {}  # focus_mode -> timestamp when exhausted
+
+        # PERSON MODE TRACKING: Prevent spam, maintain cooldown
+        self.last_person_observation = 0  # Timestamp of last PERSON mode
+        self.person_cooldown = 120  # 2 minutes between person observations
+        self.last_person_visual_detail = ""  # What we noticed about the person
 
         # Scene-level tracking (unified temporal + scene awareness)
         self.scene_nouns = set()  # Current scene elements
@@ -125,10 +131,10 @@ class FocusEngine:
 
         # Exhaustion detection thresholds
         self.exhaustion_thresholds = {
-            'VISUAL': 180,      # 3 minutes max before exhaustion check
-            'EMOTIONAL': 90,    # 90 seconds - EMOTIONAL mode gets repetitive fast
-            'MEMORY': 180,      # 3 minutes
-            'PHILOSOPHICAL': 300  # 5 minutes for deep thinking
+            'VISUAL': 60,       # 1 minute - rotate quickly to avoid description loops
+            'EMOTIONAL': 45,    # 45 seconds - EMOTIONAL mode gets repetitive fast
+            'MEMORY': 90,       # 90 seconds
+            'PHILOSOPHICAL': 120  # 2 minutes for deep thinking
         }
 
         # FOCUS STICKINESS: How resistant each mode is to interruption
@@ -153,8 +159,8 @@ class FocusEngine:
         self.visual_continuation_threshold = 0.35  # Was 0.15
 
         # Focus transition thresholds (dynamic, context-aware)
-        self.boredom_threshold = 45.0  # seconds of static content
-        self.introspection_threshold = 120.0  # seconds before deep philosophy
+        self.boredom_threshold = 30.0  # seconds of static content (was 45)
+        self.introspection_threshold = 60.0  # seconds before deep philosophy (was 120)
 
         # Current session tracking
         self.session_start = time.time()
@@ -234,23 +240,23 @@ class FocusEngine:
         else:
             signals.append("depth_plateau:no")
 
-        # Signal 4: Observation count - modes should rotate after certain counts
-        if focus_mode == "VISUAL" and session.observation_count >= 15:
-            # VISUAL exhausts from sheer observation count, not just time
-            obs_ratio = min(1.0, session.observation_count / 20)
+        # Signal 4: Observation count - modes should rotate quickly for organic flow
+        if focus_mode == "VISUAL" and session.observation_count >= 5:
+            # VISUAL exhausts quickly - prevent endless description loops
+            obs_ratio = min(1.0, session.observation_count / 8)
             obs_bonus = obs_ratio * 0.4
             score += obs_bonus
-            signals.append(f"obs_count:+{obs_bonus:.2f}({session.observation_count}/20)")
-        elif focus_mode == "EMOTIONAL" and session.observation_count >= 8:
+            signals.append(f"obs_count:+{obs_bonus:.2f}({session.observation_count}/8)")
+        elif focus_mode == "EMOTIONAL" and session.observation_count >= 4:
             # EMOTIONAL exhausts quickly - it tends to be repetitive
-            obs_ratio = min(1.0, session.observation_count / 12)
+            obs_ratio = min(1.0, session.observation_count / 6)
             obs_bonus = obs_ratio * 0.5  # Stronger bonus than VISUAL
             score += obs_bonus
-            signals.append(f"obs_count:+{obs_bonus:.2f}({session.observation_count}/12)")
+            signals.append(f"obs_count:+{obs_bonus:.2f}({session.observation_count}/6)")
         elif focus_mode == "VISUAL":
-            signals.append(f"obs_count:{session.observation_count}/15(not yet)")
+            signals.append(f"obs_count:{session.observation_count}/5(not yet)")
         elif focus_mode == "EMOTIONAL":
-            signals.append(f"obs_count:{session.observation_count}/8(not yet)")
+            signals.append(f"obs_count:{session.observation_count}/4(not yet)")
 
         # Signal 5: Time in focus
         duration = session.duration()
@@ -270,7 +276,7 @@ class FocusEngine:
     def is_focus_exhausted(self, focus_mode: str, repetition_detected: bool = False) -> bool:
         """Check if current focus mode is exhausted"""
         exhaustion_score = self.calculate_exhaustion_score(focus_mode, repetition_detected)
-        return exhaustion_score >= 0.7  # Exhaustion threshold
+        return exhaustion_score >= 0.5  # Exhaustion threshold (lowered to rotate faster)
 
     def record_observation(self, text: str, focus_mode: str):
         """Record an observation in the current focus session"""
@@ -451,7 +457,7 @@ class FocusEngine:
 
         # Check if current focus is exhausted - THIS TAKES PRIORITY
         exhaustion_score = self.calculate_exhaustion_score(self.current_focus, repetition_detected)
-        is_exhausted = exhaustion_score >= 0.7
+        is_exhausted = exhaustion_score >= 0.5  # Match is_focus_exhausted threshold
 
         if is_exhausted:
             # Mark this focus as recently exhausted (cooldown period)
@@ -485,12 +491,21 @@ class FocusEngine:
         time_in_focus = current_time - self.session_start
 
         # Person events - ALWAYS interrupt (highest priority)
-        # But check minimum duration for philosophical/temporal modes
+        # Use PERSON mode for brief grounding, then return to narrative flow
         if novelty_score >= 0.95:  # Someone NEW arrived or everyone LEFT
+            # Check PERSON mode cooldown
+            time_since_person_obs = current_time - self.last_person_observation
+            person_mode_available = time_since_person_obs >= self.person_cooldown
+
             if self.current_focus in ['PHILOSOPHICAL'] and time_in_focus < min_duration:
                 # Too deep in thought to interrupt yet
                 print(f"🧠 {self.current_focus} mode protected - person event noted but not interrupting ({time_in_focus:.0f}s < {min_duration}s)")
+            elif person_mode_available and self.current_focus != "PERSON":
+                # Use PERSON mode for brief vision-grounded observation
+                print(f"👤 Person event → PERSON mode (brief grounding)")
+                return self._focus_person(state_analysis, "person_arrival")
             elif self.current_focus != "VISUAL" and not visual_in_cooldown:
+                # PERSON mode in cooldown - fall back to VISUAL
                 return self._focus_visual(state_analysis, "person_event_interrupt")
 
         # High visual novelty - check stickiness before interrupting
@@ -542,6 +557,28 @@ class FocusEngine:
             return self._focus_philosophical(state_analysis, "temporal_depth_introspection")
         elif static_duration > self.boredom_threshold:
             return self._focus_philosophical(state_analysis, "boredom_introspection")
+
+        # === SESSION-BASED INTROSPECTION (doesn't require static scene) ===
+        # After enough total observations, naturally become reflective regardless of environment
+        session_duration = state_analysis['temporal']['session_duration']
+        observation_count = state_analysis['temporal']['observation_count']
+
+        # Periodic introspective check-ins based on session length
+        import random
+        if session_duration > 600 and observation_count > 100:  # 10+ minutes, 100+ observations
+            # Extended session - frequently (40% chance) check in philosophically
+            if random.random() < 0.4 and self.current_focus not in ['PHILOSOPHICAL', 'MEMORY']:
+                return self._focus_philosophical(state_analysis, "extended_session_reflection")
+        elif session_duration > 300 and observation_count > 50:  # 5+ minutes, 50+ observations
+            # Mid-length session - occasionally (25% chance) drift into philosophical mode
+            if random.random() < 0.25 and self.current_focus not in ['PHILOSOPHICAL', 'MEMORY']:
+                return self._focus_philosophical(state_analysis, "existential_check_in")
+
+        # Memory recall based on observation density (not just static time)
+        if observation_count > 40 and self.current_focus == "VISUAL":
+            # After many visual observations, check if we should recall instead of continuing to describe
+            if state_analysis['memory']['familiarity_high'] and random.random() < 0.3:
+                return self._focus_memory(state_analysis, "observation_fatigue_recall")
 
         # Default: maintain current focus
         return self._maintain_current_focus(state_analysis)
@@ -769,7 +806,7 @@ class FocusEngine:
     def _focus_philosophical(self, state: Dict, reason: str) -> Tuple[str, Dict]:
         """Philosophical focus mode - deep introspection and meaning."""
         self._transition_focus("PHILOSOPHICAL", reason)
-        
+
         context = {
             'mode': 'PHILOSOPHICAL',
             'reason': reason,
@@ -778,14 +815,50 @@ class FocusEngine:
             'attention_type': 'deep_introspection',
             'compression_level': 'low'  # Need rich context for depth
         }
-        
+
         return "PHILOSOPHICAL", context
+
+    def _focus_person(self, state: Dict, reason: str) -> Tuple[str, Dict]:
+        """PERSON focus mode - brief vision-grounded observation of people present.
+
+        This mode is a narrative punctuation mark, not a description mode.
+        It grounds the duck in visual reality briefly, then lets it continue musing.
+
+        Key principles:
+        - ONE observation only (never sticky)
+        - Always uses vision (llava)
+        - Observes concrete details (clothing, position, activity)
+        - Feeds details back into narrative thread via last_person_visual_detail
+        - 2-minute cooldown to prevent spam
+        """
+        self._transition_focus("PERSON", reason)
+
+        # Mark timestamp for cooldown
+        self.last_person_observation = time.time()
+
+        context = {
+            'mode': 'PERSON',
+            'reason': reason,
+            'attention_type': 'person_grounding',
+            'compression_level': 'high',  # Minimal context - just observe
+            'force_vision': True,  # ALWAYS use vision model
+            'max_observations': 1  # Exit after ONE observation
+        }
+
+        return "PERSON", context
     
     # REMOVED: _focus_temporal - temporal awareness now integrated into compression baselines
     
     def _maintain_current_focus(self, state: Dict) -> Tuple[str, Dict]:
         """Continue with current focus but update context."""
-        
+
+        # PERSON mode NEVER continues - always exit after ONE observation
+        if self.current_focus == "PERSON":
+            print(f"👤 PERSON mode complete - transitioning to introspective mode")
+            # Transition to mode that continues the narrative
+            # Store the visual detail for use in next prompt
+            return self._focus_philosophical(state, "person_observed_continue_musing")
+
         # Find appropriate context for current focus
         if self.current_focus == "VISUAL":
             return self._focus_visual(state, "continued_attention")
@@ -819,7 +892,7 @@ class FocusEngine:
 
         # All recently visited - pick based on current state
         static_duration = state['temporal']['static_duration']
-        if static_duration > 120:
+        if static_duration > 60:  # Reduced from 120s - allow more philosophical moments
             return self._focus_philosophical(state, reason)
         elif state['memory']['familiarity_high']:
             return self._focus_memory(state, reason)

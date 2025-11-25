@@ -35,9 +35,14 @@ class PresenceState:
 
     urgency_score: float = 0.0         # 0.0-1.0, decays over time
 
-    # Position info
+    # Detection confidence (for vision reconciliation)
+    detection_uncertain: bool = False   # True when YOLO lost detection but within grace period
+
+    # Spatial awareness
     avg_position_x: float = 0.0        # Average X position (for "left/right" awareness)
     avg_position_y: float = 0.0        # Average Y position (for "near/far" awareness)
+    avg_bbox_size: float = 0.0         # Average bbox area (for distance: bigger = closer)
+    spatial_description: str = ""      # "close", "far", "very close", etc.
 
 class PersonTracker:
     """Track people in frame for narrative continuity"""
@@ -110,7 +115,7 @@ class PersonTracker:
 
         # Detection persistence (prevents flicker-driven arrivals/departures)
         self.presence_confirmation_time = 0.6   # Seconds of consistent detection before confirming presence
-        self.absence_grace_time = 2.5           # Seconds to wait before declaring everyone gone
+        self.absence_grace_time = 8.0           # Seconds to wait before declaring everyone gone (debounce for lighting/occlusion)
         self.pending_positive_count = 0
         self.pending_positive_start = None
         self.last_positive_detection_time = 0.0
@@ -409,16 +414,30 @@ class PersonTracker:
         someone_now = person_count > 0
         someone_before = self.presence_state.someone_present
 
+        # CRITICAL FIX: Only trigger departure if grace period has FULLY expired
+        # Check if we're still within grace period (person might still be here, just lost detection)
+        within_grace_period = False
+        if not someone_now and self.last_positive_detection_time:
+            time_since_last_detection = current_time - self.last_positive_detection_time
+            within_grace_period = time_since_last_detection < self.absence_grace_time
+
         # Update person count
         self.presence_state.person_count = person_count
 
-        # Update presence/absence durations
+        # Update presence/absence durations - ONLY based on STABLE state (not raw detections)
+        # This prevents duration from resetting due to brief detection losses
         if someone_now:
-            self.presence_state.presence_duration += dt
+            # Only accumulate presence time if we're past the grace period (stable presence)
+            if self.presence_state.someone_present:  # Was already present
+                self.presence_state.presence_duration += dt
+            elif not within_grace_period:  # Now confirmed present
+                self.presence_state.presence_duration += dt
             self.presence_state.absence_duration = 0.0
         else:
-            self.presence_state.absence_duration += dt
-            self.presence_state.presence_duration = 0.0
+            # Only accumulate absence time if grace period has fully expired
+            if not within_grace_period:
+                self.presence_state.absence_duration += dt
+                self.presence_state.presence_duration = 0.0
 
         # Update activity description
         if activity_description:
@@ -428,12 +447,31 @@ class PersonTracker:
             self.presence_state.activity_description = "still"
             self.presence_state.last_activity_time += dt
 
-        # Update average position (for spatial awareness)
+        # Update average position and size (for spatial awareness)
         if self.person_positions:
             total_x = sum(p['center_x'] for p in self.person_positions)
             total_y = sum(p['center_y'] for p in self.person_positions)
+            total_size = sum(p['width'] * p['height'] for p in self.person_positions)
             self.presence_state.avg_position_x = total_x / len(self.person_positions)
             self.presence_state.avg_position_y = total_y / len(self.person_positions)
+            self.presence_state.avg_bbox_size = total_size / len(self.person_positions)
+
+            # Categorize distance based on bbox size (as % of frame)
+            # Assuming 640x480 frame = 307200 pixels total
+            size_percent = (self.presence_state.avg_bbox_size / 307200) * 100
+            if size_percent > 40:
+                self.presence_state.spatial_description = "very close"
+            elif size_percent > 20:
+                self.presence_state.spatial_description = "close"
+            elif size_percent > 10:
+                self.presence_state.spatial_description = "nearby"
+            elif size_percent > 5:
+                self.presence_state.spatial_description = "across the room"
+            else:
+                self.presence_state.spatial_description = "far away"
+
+        # Update detection uncertainty flag (YOLO lost detection but within grace)
+        self.presence_state.detection_uncertain = (not someone_now and someone_before and within_grace_period)
 
         # Detect state transitions and calculate urgency
         if someone_now and not someone_before:
@@ -443,8 +481,8 @@ class PersonTracker:
             self.presence_state.urgency_score = 0.9
             self.presence_state.someone_present = True
 
-        elif not someone_now and someone_before:
-            # DEPARTURE - high urgency!
+        elif not someone_now and someone_before and not within_grace_period:
+            # DEPARTURE - ONLY if grace period fully expired (not just brief detection loss)
             self.presence_state.just_left = True
             self.presence_state.just_arrived = False
             self.presence_state.urgency_score = 0.8
@@ -462,8 +500,9 @@ class PersonTracker:
             if self.presence_state.absence_duration > 3.0:
                 self.presence_state.just_left = False
 
-            # Update presence flag
-            self.presence_state.someone_present = someone_now
+            # Update presence flag (but don't trigger departure event if within grace period)
+            if not within_grace_period:
+                self.presence_state.someone_present = someone_now
 
         # Activity boosts urgency slightly
         if activity_description in ["moving across the space", "moving around"]:

@@ -1277,51 +1277,51 @@ class EmbodiedAI:
             return False
 
     def _generate_contextual_reaction_llm(self, event_type, presence_state):
-        """Generate contextual reaction using LLM based on recent thought"""
-
-        # Get last thought for context
-        last_thought = "observing"
-        if self.personality and hasattr(self.personality, 'recent_responses') and self.personality.recent_responses:
-            last_thought = self.personality.recent_responses[-1]
+        """Generate contextual reaction using llava with minimal prompt"""
 
         # Build event description
         events = {
-            "arrival": "someone just arrived",
-            "departure": "someone just left",
-            "movement": "they started moving"
+            "arrival": "someone arrived",
+            "departure": "someone left",
+            "movement": "movement detected"
         }
-        event = events.get(event_type, "something changed")
+        event = events.get(event_type, "change")
 
-        # Generate contextual reaction (fast text-only model)
-        prompt = f"""You're a duck. You just thought: "{last_thought}"
-
-But now {event}!
-
-Raw immediate reaction (2-5 words only):"""
+        # Ultra-minimal prompt for speed
+        prompt = f"Duck sees: {event}. React (2 words):"
 
         try:
-            # Use personality's query method for consistency
-            if self.personality:
-                # Use simple text generation (no special params - keep it fast)
-                import requests
-                from config import OLLAMA_URL, SUBCONSCIOUS_MODEL
+            import requests
+            import base64
+            from config import OLLAMA_URL, SINGLE_MULTIMODAL_MODEL
 
-                data = {
-                    "model": SUBCONSCIOUS_MODEL,
-                    "prompt": prompt,
-                    "stream": False,
-                    "options": {
-                        "temperature": 0.9,
-                        "num_predict": 15
-                    }
+            # Get current frame for visual context
+            image_b64 = None
+            if hasattr(self, 'latest_frame_path') and self.latest_frame_path:
+                try:
+                    with open(self.latest_frame_path, 'rb') as f:
+                        image_b64 = base64.b64encode(f.read()).decode('utf-8')
+                except:
+                    pass
+
+            # Use same llava model as main thoughts but ultra-minimal prompt
+            data = {
+                "model": SINGLE_MULTIMODAL_MODEL,
+                "prompt": prompt,
+                "stream": False,
+                "images": [image_b64] if image_b64 else [],
+                "options": {
+                    "temperature": 0.95,
+                    "num_predict": 8  # Very short - force brief response
                 }
+            }
 
-                response = requests.post(f"{OLLAMA_URL}/api/generate", json=data, timeout=10)
-                if response.status_code == 200:
-                    result = response.json()
-                    reaction = result.get('response', '').strip()
+            response = requests.post(f"{OLLAMA_URL}/api/generate", json=data, timeout=8)  # Generous timeout
+            if response.status_code == 200:
+                result = response.json()
+                reaction = result.get('response', '').strip()
 
-                if reaction:
+            if reaction:
                     # Clean and validate
                     reaction = reaction.strip()
                     # Only filter out explicit AI/meta language - keep personality quirks
@@ -1337,37 +1337,31 @@ Raw immediate reaction (2-5 words only):"""
         return None
 
     def _generate_contextual_reaction(self, presence_state):
-        """Generate contextual reaction based on presence state"""
+        """Generate contextual reaction based on presence state - INSTANT FALLBACKS ONLY (skip LLM to avoid Ollama overload)"""
         import random
 
-        # ARRIVAL reactions - generate contextually based on last thought
+        # ARRIVAL reactions - use instant fallbacks to avoid concurrent llava calls
         if presence_state.just_arrived:
             if presence_state.presence_duration < 1.0:
-                # Just arrived this moment - generate contextual reaction
-                reaction = self._generate_contextual_reaction_llm("arrival", presence_state)
-                if reaction:
-                    return reaction
-                # Fallback to simple interjections if LLM fails
+                # Just arrived this moment - use simple interjections (no LLM call)
                 return random.choice(["Oh", "Hello there", "Hi", "Hm"])
             else:
                 # Already acknowledged - don't repeat
                 return None
 
-        # DEPARTURE reactions - ENABLED (was disabled, now generates contextually)
+        # DEPARTURE reactions - disabled to avoid concurrent llava calls
         elif presence_state.just_left:
-            # Generate contextual departure reaction
-            reaction = self._generate_contextual_reaction_llm("departure", presence_state)
-            return reaction  # Returns None if LLM fails, which is fine
+            # Skip LLM call - return None (no reaction needed for departures)
+            return None
 
-        # MOVEMENT reactions - SELECTIVE (only first movement after stillness)
+        # MOVEMENT reactions - disabled to avoid concurrent llava calls
         elif presence_state.activity_description in ["moving", "moving around"]:
             # Check if person was previously still (prevents spam)
             was_still = getattr(self, 'person_was_still', True)
             if was_still:
                 self.person_was_still = False
-                # React to first movement only
-                reaction = self._generate_contextual_reaction_llm("movement", presence_state)
-                return reaction
+                # Skip LLM call - return None (no reaction needed for movement)
+                return None
             return None
 
         # Reset stillness flag when person becomes still again
