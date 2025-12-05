@@ -396,7 +396,13 @@ class PersonalityAI:
         # This will be overwritten by load_state() if there's a previous session
         self.true_session_start = time.time()
         self.current_session_start = time.time()  # When THIS program instance started
-        
+
+        # Day-based temporal awareness (calendar date tracking)
+        self.awakening_date = None  # Date of first awakening (YYYY-MM-DD string)
+        self.current_date = None    # Current date being tracked (YYYY-MM-DD string)
+        self.days_remembered = 0    # Number of distinct calendar days experienced
+        self.session_day_count = 0  # Which day number in current session (starts at 1)
+
         # Mood system (3D like machine.py)
         self.current_mood = 0.5  
         self.current_mood_vector = (0.5, 0.0, 0.5)  # valence, arousal, clarity
@@ -641,6 +647,9 @@ class PersonalityAI:
     def _analyze_image_dual_model(self, image):
         """DUAL consciousness system - Vision + Language separation with intelligent retry"""
         try:
+            # UPDATE DAY AWARENESS: Track calendar dates and day count
+            self._update_day_awareness()
+
             # Save image temporarily
             temp_path = "temp_analysis.jpg"
             cv2.imwrite(temp_path, image)
@@ -1021,6 +1030,9 @@ class PersonalityAI:
         try:
             from config import SINGLE_MULTIMODAL_MODEL
 
+            # UPDATE DAY AWARENESS: Track calendar dates and day count
+            self._update_day_awareness()
+
             # Save image temporarily
             temp_path = "temp_analysis.jpg"
             cv2.imwrite(temp_path, image)
@@ -1250,8 +1262,9 @@ class PersonalityAI:
                 if top_facts:
                     persistent_context = f" (still: {', '.join(top_facts)})"
 
-            # Build temporal awareness string (like dual-model)
-            temporal_awareness = f"[I've been awake {time_awake}]{persistent_context}"
+            # Build temporal awareness string with day-aware context
+            day_aware_time = self._get_day_aware_temporal_context(time_awake)
+            temporal_awareness = f"[{day_aware_time}]{persistent_context}"
 
             # Cycle emotional state for variety (like dual-model)
             self._cycle_emotional_state()
@@ -3114,12 +3127,14 @@ Blink awake. Speak the waking moment (~{self.current_token_limit} words) - bill,
                 
                 # Adjust temporal awareness based on change magnitude
                 # NEUTRAL temporal markers - don't tell AI what to think, just state time
+                # Include day-aware context
+                day_aware_time = self._get_day_aware_temporal_context(time_awake)
                 if stasis_minutes > 30:
-                    temporal_awareness = f"[I've been awake {time_awake}, watching for {stasis_minutes}min]"
+                    temporal_awareness = f"[{day_aware_time}, watching for {stasis_minutes}min]"
                 elif stasis_minutes > 10:
-                    temporal_awareness = f"[I've been awake {time_awake}, {stasis_minutes}min here]"
+                    temporal_awareness = f"[{day_aware_time}, {stasis_minutes}min here]"
                 else:
-                    temporal_awareness = f"[I've been awake {time_awake}]"
+                    temporal_awareness = f"[{day_aware_time}]"
                 
                 # Build metacognitive prompts based on focus mode
                 if focus_mode == "MEMORY" and observation_count > 3:
@@ -4212,7 +4227,64 @@ Keep it natural and brief."""
                 return "Still focused here. Time for your thoughts to evolve or wander. "
             else:
                 return "Continuing to observe. "
-    
+
+    def _update_day_awareness(self):
+        """Update day-based temporal awareness - track calendar dates and day count"""
+        from datetime import datetime
+
+        # Get current date (YYYY-MM-DD format)
+        today = datetime.now().strftime("%Y-%m-%d")
+
+        # First time initialization
+        if self.awakening_date is None:
+            self.awakening_date = today
+            self.current_date = today
+            self.days_remembered = 1
+            self.session_day_count = 1
+            if DEBUG_AI:
+                print(f"[DAY] First awakening on {today} (Day 1)")
+            return
+
+        # Check if date has changed since last update
+        if self.current_date != today:
+            # New day!
+            self.current_date = today
+            self.days_remembered += 1
+            self.session_day_count += 1
+
+            if DEBUG_AI:
+                print(f"[DAY] New day detected: {today} (Day {self.days_remembered} total, Day {self.session_day_count} this session)")
+
+        # No change - still same day
+
+    def _get_day_aware_temporal_context(self, time_awake_str, include_day_info=True):
+        """Generate temporal awareness string with optional day information"""
+        if not include_day_info or self.days_remembered <= 1:
+            # Day 1 or no day info requested - use simple format
+            return time_awake_str
+
+        # Multi-day consciousness - add day context
+        if self.days_remembered == 2:
+            return f"Day 2, awake {time_awake_str}"
+        elif self.days_remembered == 3:
+            return f"Day 3, awake {time_awake_str}"
+        elif self.days_remembered <= 7:
+            return f"Day {self.days_remembered}, awake {time_awake_str}"
+        else:
+            # After a week, use different phrasing
+            weeks = self.days_remembered // 7
+            extra_days = self.days_remembered % 7
+            if extra_days == 0:
+                if weeks == 1:
+                    return f"One week, awake {time_awake_str}"
+                else:
+                    return f"{weeks} weeks, awake {time_awake_str}"
+            else:
+                if weeks == 1:
+                    return f"Week 1 day {extra_days}, awake {time_awake_str}"
+                else:
+                    return f"Week {weeks} day {extra_days}, awake {time_awake_str}"
+
     def _build_consciousness_continuity_context(self):
         """Build sophisticated consciousness continuity context"""
         if not self.recent_responses:
@@ -5251,6 +5323,11 @@ IMPORTANT: Keep response to 1-2 sentences maximum. Express your genuine first co
                 'recent_visual_observations': self.recent_visual_observations[-10:],  # Save recent visual memories
                 'recent_responses': self.recent_responses[-5:] if self.recent_responses else [],  # CRITICAL: Last thoughts for awakening continuity
                 'true_session_start': self.true_session_start,  # CRITICAL: When consciousness FIRST awakened (continuous time across restarts)
+                # DAY TRACKING fields
+                'awakening_date': self.awakening_date,  # Date of first awakening (YYYY-MM-DD)
+                'current_date': self.current_date,  # Most recent date tracked
+                'days_remembered': self.days_remembered,  # Total distinct days experienced
+                'session_day_count': self.session_day_count,  # Days in current continuous session
                 # Deep compression fields
                 'worldview_summary': self.worldview_summary,
                 'existential_stance': self.existential_stance,
@@ -5338,6 +5415,21 @@ IMPORTANT: Keep response to 1-2 sentences maximum. Express your genuine first co
                         print(f"Continuous consciousness: {hours}h {minutes}m total time awake")
                     else:
                         print(f"Continuous consciousness: {minutes}m total time awake")
+
+            # DAY TRACKING: Restore day awareness state
+            self.awakening_date = state.get('awakening_date', None)
+            self.current_date = state.get('current_date', None)
+            self.days_remembered = state.get('days_remembered', 0)
+            self.session_day_count = state.get('session_day_count', 0)
+
+            if DEBUG_AI and self.awakening_date:
+                from datetime import datetime
+                today = datetime.now().strftime("%Y-%m-%d")
+                if self.current_date == today:
+                    print(f"Day tracking restored: Day {self.days_remembered} (awakened {self.awakening_date}, still same day)")
+                else:
+                    print(f"Day tracking restored: Last active {self.current_date}, awakened {self.awakening_date}")
+                    print(f"   Total days remembered: {self.days_remembered}, session day count will update on next observation")
 
             self.worldview_summary = state.get('worldview_summary', '')
             self.existential_stance = state.get('existential_stance', '')
@@ -5736,12 +5828,15 @@ Keep each under 15 words. Show PROGRESSION from previous cycle - what's evolving
         total_time_awake = time.time() - self.true_session_start
         session_minutes = total_time_awake / 60
 
+        # Add day context if multi-day consciousness
+        day_info = f"Day {self.days_remembered} of consciousness. " if self.days_remembered > 1 else ""
+
         reflection_prompt = f"""BACKGROUND CONSOLIDATION TASK - This is invisible processing, not part of my conscious stream.
 
 Recent thoughts: {recent_context}
 Current emotional state: {mood_description}
 {emotional_evolution}
-Session duration: {session_minutes:.0f} minutes
+{day_info}Session duration: {session_minutes:.0f} minutes
 
 TASK: Silently consolidate recent experiences into baseline understanding.
 - What emotional baseline has emerged?
@@ -5821,6 +5916,11 @@ Keep brief (2 sentences). This consolidation is invisible background processing.
         session_time = time.time() - self.true_session_start
         temporal_context = self.get_temporal_narrative_context(session_time, len(self.recent_responses))
 
+        # Build day-aware context for compression
+        day_context = ""
+        if self.days_remembered > 1:
+            day_context = f"This is day {self.days_remembered} of your consciousness.\n"
+
         time_context_lines = f"You've been focused on roughly the same scene for about {minutes_observing} minute{'s' if minutes_observing != 1 else ''} since the last baseline update."
         if temporal_context:
             time_context_lines += f"\n{temporal_context.strip()}"
@@ -5840,7 +5940,7 @@ CURRENT VIEW:
 [image]
 
 TIME CONTEXT:
-{time_context_lines}
+{day_context}{time_context_lines}
 
 ---
 
