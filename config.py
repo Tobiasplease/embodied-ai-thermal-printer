@@ -2,7 +2,7 @@
 # Simple, single-source configuration
 
 # Camera Settings
-CAMERA_INDEX = 1  # 0 = built-in laptop camera, 1 = external USB webcam
+CAMERA_INDEX = 0  # 0 = external USB webcam, 1 = built-in laptop camera (Windows reordered indices)
 CAMERA_WIDTH = 1280  # High resolution for built-in camera
 CAMERA_HEIGHT = 720
 CAMERA_FPS = 30
@@ -94,10 +94,10 @@ VOICE_ENABLED = True  # Set to True to enable voice output
 VOICE_ENGINE = "espeak"  # "espeak" (lo-fi, whisper), "windows" (robotic), or "piper" (natural)
 
 # eSpeak TTS Settings (if VOICE_ENGINE = "espeak")
-ESPEAK_VOICE = "en+whisperf"  # Voice variants: en+whisper (male), en+whisperf (female), en+f3, etc.
+ESPEAK_VOICE = "en-us+whisper"  # Voice variants: en+whisper (British male), en-us+whisper (American), en+whisperf (female)
 # NOTE: Can't stack variants like en+f3+whisper - only 2 components allowed
 ESPEAK_SPEED = 150  # Words per minute: 80-450 (faster = more natural whisper)
-ESPEAK_PITCH = 70  # Pitch: 0-99 (higher = more feminine/lighter)
+ESPEAK_PITCH = 85  # Pitch: 0-99 (higher = more feminine/lighter)
 
 # Piper TTS Settings (if VOICE_ENGINE = "piper")
 VOICE_MODEL = "en_US-kristin-medium"  # Voice model: kristin (F), ryan (M), lessac (F)

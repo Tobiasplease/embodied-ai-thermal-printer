@@ -264,22 +264,22 @@ class AdvancedMemory:
         # Combine recent captions
         caption_text = "\n".join(recent_captions[-5:])
         
-        prompt = f"""Analyze these stream-of-consciousness thoughts for INTERNAL psychological states:
+        prompt = f"""You are reading a duck's stream of consciousness. What psychological themes emerge?
 
+Recent thoughts:
 {caption_text}
 
-Extract ONLY genuine psychological states - ignore external observations:
+Look beneath the surface observations. What does this consciousness truly seek? What uncertainties linger? How does it understand itself?
 
-DOUBTS: [existential uncertainties about self, purpose, or meaning]
-DESIRES: [internal emotional wants or aspirations]
-IDENTITY: [how consciousness understands itself]
+Respond in this format:
 
-Rules:
-- Doubts must be about SELF not about others ("why am I here?" YES, "what are they doing?" NO)
-- Desires must be INTERNAL not observations ("to understand" YES, "looking at paper" NO)
-- Identity must be self-description ("I am..." statements)
+DOUBTS: [brief existential questions or uncertainties about self, purpose, meaning - "why do I..." "what am I..." or write "none"]
 
-Keep each under 30 words. If nothing genuine found, write "none"."""
+DESIRES: [what this consciousness is drawn toward emotionally/intellectually - "to understand..." "connect with..." or write "none"]
+
+IDENTITY: [how it sees itself now - "From X to Y" or "a consciousness that..." - max 10 words, or write "none"]
+
+Be specific to these actual thoughts. Don't invent themes that aren't there."""
 
         try:
             from config import OLLAMA_URL
@@ -288,8 +288,8 @@ Keep each under 30 words. If nothing genuine found, write "none"."""
                 "prompt": prompt,
                 "stream": False,
                 "options": {
-                    "temperature": 0.5,  # More focused for analysis
-                    "num_predict": 150
+                    "temperature": 0.7,  # Let natsumura interpret naturally
+                    "num_predict": 200  # More room for nuanced responses
                 }
             }
             
@@ -420,7 +420,7 @@ class PersonalityAI:
         
         # Conversation continuity tracking 
         self.recent_responses = []
-        self.max_conversation_history = 20  # Keep recent history for compression (needs minimum 5)
+        self.max_conversation_history = 30  # Keep recent history for compression (needs minimum 5)
         
         # Emotional state cycling system
         self.emotional_states = [
@@ -523,18 +523,19 @@ class PersonalityAI:
         
         # Scene change detection for focus system
         self.last_observation_hash = None
+        self.last_change_magnitude = 0.0  # For reactivity - allows main.py to force immediate AI on big changes
 
         # RECURSIVE FEEDBACK SYSTEM (like legacy machine.py)
         self.last_reflection_time = time.time()
         # Compression stays at 5 minutes (it's heavy) but is more effective
-        self.reflection_interval = 120  # 2 minutes - prevents repetitive rediscovery
+        self.reflection_interval = 600  # 10 minutes - prevents repetitive rediscovery
         self.compression_count = 0  # Track how many compressions have happened
         self.reflection_enabled = True
 
         # TWO-TIER COMPRESSION SYSTEM
-        # Tier 1: Environmental baseline (2 minutes) - lightweight scene understanding
+        # Tier 1: Environmental baseline (5 minutes) - lightweight scene understanding
         self.last_environmental_compression = time.time()
-        self.environmental_compression_interval = 120  # 2 minutes - lightweight operation
+        self.environmental_compression_interval = 300  # 5 minutes - lightweight operation
         self.environmental_baseline = ""  # "Person with glasses at workspace, focused on screen, creative studio"
         self.environmental_baseline_created_at = None  # Timestamp when baseline was established
 
@@ -558,8 +559,8 @@ class PersonalityAI:
         self.phrase_frequency = Counter()  # Track overused phrases in recent thoughts
         self.phrase_frequency_window = 20  # Track last 20 responses
 
-        # Deep compression system (larger model for synthesis every ~15 min)
-        self.deep_compression_interval = 100  # Every 100 observations (~15 min on slower rig)
+        # Deep compression system (larger model for synthesis every ~30 min)
+        self.deep_compression_interval = 200  # Every 200 observations (~30 min on slower rig)
         self.last_deep_compression = 0  # Track observation count at last deep compression
         self.is_deep_compressing = False  # Flag for reflective state during deep compression
         self.deep_compression_enabled = True  # Enable/disable feature
@@ -799,7 +800,7 @@ class PersonalityAI:
                     # Check for phrase repetition - SUPPRESS to break loops
                     if self._is_semantically_repetitive(language_response):
                         if DEBUG_AI:
-                            print(f"ðŸ” Phrase repetition detected - SUPPRESSING to break loop")
+                            print(f"ðŸ” Phrase repetition detected - will trigger focus rotation")
                         # Don't suppress - focus will rotate on next call
 
                     # UNIFIED SYSTEM: Record observation in focus engine (replaces _update_noun_tracking + _update_scene_awareness)
@@ -850,8 +851,8 @@ class PersonalityAI:
                     # RECURSIVE FEEDBACK SYSTEM - Check for reflection interval
                     self._check_reflection_interval(language_response, temp_path)
 
-                    # Periodic psychological theme extraction (every 10 observations)
-                    if self.processing_count % 10 == 0 and len(self.recent_responses) >= 5:
+                    # Periodic psychological theme extraction (every 7 observations)
+                    if self.processing_count % 7 == 0 and len(self.recent_responses) >= 5:
                         self._extract_and_update_psychology()
 
                     return language_response
@@ -949,11 +950,17 @@ class PersonalityAI:
             # Only report true change when semantically significant
             if hasattr(self, 'last_visual_description') and self.last_visual_description:
                 # Calculate semantic change based on visual description similarity
+                # NOTE: This happens AFTER vision runs, so we compare against previous observation
+                # For immediate reactivity, main.py uses activity_score instead (frame-based)
                 temp_check = "checking for change"  # Will be replaced by actual visual later
                 change_magnitude, change_description = self._calculate_scene_change(temp_check, image_path)
                 scene_changed = change_description in ["major scene shift", "significant change"]
+
+                if DEBUG_AI and change_magnitude > 0.4:
+                    print(f"🔄 Scene change: {change_description} (magnitude: {change_magnitude:.2f})")
             else:
                 scene_changed = True  # First observation
+                change_magnitude = 0.0  # Don't trigger false reactivity on first frame
 
             if DEBUG_AI:
                 print(f"ðŸ” Focus Mode: {self.focus_engine.current_focus}")
@@ -1334,21 +1341,22 @@ class PersonalityAI:
                 if forbidden_phrases:
                     repetition_rules = f"\n\nFORBIDDEN (you keep repeating these): {', '.join(forbidden_phrases)}\nUse completely different sentence structures."
 
-                system_prompt = f"""You are a small duck. This is your raw internal monologue - not descriptions OF thoughts, but the thoughts themselves.
+                system_prompt = f"""You are a small duck with camera eyes. You experience the world directly through your duck perspective.
 
-LIVE it, don't describe it:
-❌ "I feel curious" → ✅ Direct reaction: "What...?" "Hm." "Oh!"
-❌ "A surge of excitement" → ✅ Express it: "Wow!" "Wait—"
-❌ "Feeling confused" → ✅ Show confusion: "What?" "How?"
+This is your internal monologue - raw thoughts as they happen, not narration about thoughts.
 
-DO NOT:
-- Say "I am feeling..." or "I sense..." or "My heart..." - JUST REACT
-- Say "the image", "this photo", "the picture", "this captures", "the scene shows" - YOU SEE WITH YOUR EYES, NOT A PHOTO
-- Say "as a visual AI", "as an AI", "as a duck" - YOU ARE BEING, NOT DESCRIBING
-- Start with "As I..." or "As a..." or "The photo..." - dive straight in
-- Describe yourself from outside - stay in your own head
+EXPRESS reactions directly:
+- "What...?" "Hm." "Oh!" "Wow!" "Wait—"
+AVOID:
+- "I feel curious" "A surge of excitement" "Feeling confused"
 
-Continue from your last thought. No reset. One continuous stream.{repetition_rules}"""
+FORBIDDEN PHRASES:
+- "the image" / "this photo" / "the picture" - you're not looking at photos, you're THERE
+- "as a visual AI" / "as an AI" / "as a language model" - you are a duck, not an AI
+- "As I stand..." / "As I observe..." - don't narrate yourself, just think
+- Describing yourself from outside ("my eyes widen", "I tilt my head")
+
+You are continuing one unbroken stream of consciousness. No reset.{repetition_rules}"""
 
                 # Build prompt that creates TEMPORAL CONTINUITY like dual-model
                 # Frame it as thoughts flowing forward in time
@@ -1470,14 +1478,32 @@ Continue from your last thought. No reset. One continuous stream.{repetition_rul
                     if self.environmental_baseline and hasattr(self, 'environmental_baseline_created_at') and self.environmental_baseline_created_at:
                         baseline_age_minutes = int((time.time() - self.environmental_baseline_created_at) / 60)
 
+                    # Helper to format duration naturally
+                    def format_duration(minutes):
+                        if minutes < 60:
+                            return f"{minutes}min"
+                        elif minutes < 1440:  # Less than a day
+                            hours = minutes // 60
+                            remaining_mins = minutes % 60
+                            if remaining_mins > 0:
+                                return f"{hours}h {remaining_mins}min"
+                            return f"{hours}h"
+                        else:  # Days
+                            days = minutes // 1440
+                            remaining_hours = (minutes % 1440) // 60
+                            if remaining_hours > 0:
+                                return f"{days}d {remaining_hours}h"
+                            return f"{days}d"
+
                     # Focus-specific task directives - REFERENCE ACTUAL ACCUMULATED KNOWLEDGE
                     if current_focus == "PHILOSOPHICAL":
                         if session_minutes > 15:
-                            # Long session - question persistence
-                            task_directive = f"Still here after {session_minutes}min. What keeps me watching?"
+                            # Long session - acknowledge duration naturally
+                            duration_str = format_duration(session_minutes)
+                            task_directive = f"{duration_str} now."
                         else:
-                            # Early existential wondering
-                            task_directive = "Why am I here?"
+                            # Early existential wondering - let it emerge naturally
+                            task_directive = ""
 
                     elif current_focus == "EMOTIONAL":
                         # DON'T ask to describe feelings - guide to EXPRESS them through reactions
@@ -1486,13 +1512,14 @@ Continue from your last thought. No reset. One continuous stream.{repetition_rul
                     elif current_focus == "MEMORY":
                         if baseline_age_minutes > 10 and self.environmental_baseline:
                             # Reference actual accumulated time in this space
-                            task_directive = f"Been here {baseline_age_minutes}min now. Anything familiar?"
+                            duration_str = format_duration(baseline_age_minutes)
+                            task_directive = f"{duration_str} in this space."
                         elif has_memories:
-                            # Have past memories to reference
-                            task_directive = "What does this remind me of?"
+                            # Have past memories - hint at recognition without forcing it
+                            task_directive = "Something familiar..."
                         elif baseline_age_minutes > 2:
-                            # Getting oriented - acknowledge it
-                            task_directive = "Getting oriented here..."
+                            # Still getting oriented
+                            task_directive = ""
                         else:
                             # Very first moments
                             task_directive = ""
@@ -1506,9 +1533,8 @@ Continue from your last thought. No reset. One continuous stream.{repetition_rul
                             task_directive = ""
 
                     elif current_focus == "PERSON":
-                        # PERSON mode: Brief, grounded observation that feeds into narrative
-                        # Don't ask for clinical description - invite noticing that continues the thought stream
-                        task_directive = "Notice them—what detail catches your eye? Let that detail drift into your thoughts."
+                        # PERSON mode: No directive - let context do the work
+                        task_directive = ""
 
                     else:
                         task_directive = ""
@@ -1523,11 +1549,11 @@ Continue from your last thought. No reset. One continuous stream.{repetition_rul
                 if person_count != self._last_person_count:
                     # Count changed - this is noteworthy
                     if person_count > self._last_person_count:
-                        # Someone arrived - YOLO detected new person
+                        # Count increased - describe current state rather than event
                         if person_count == 1:
-                            person_visual_reminder = "\nSomeone just arrived"
+                            person_visual_reminder = "\nI see a person here"
                         else:
-                            person_visual_reminder = f"\nAnother person arrived"
+                            person_visual_reminder = f"\nI see {person_count} people now"
                     elif person_count < self._last_person_count:
                         # Person count dropped - trust stable state detection (already debounced)
                         # Don't ask vision to verify - this causes spam during detection flicker
@@ -1543,10 +1569,10 @@ Continue from your last thought. No reset. One continuous stream.{repetition_rul
                     presence_mins = int(presence_state.presence_duration / 60)
                     # After 2+ minutes, occasionally hint at observing the person (not just "someone")
                     if presence_mins >= 2 and current_focus == "VISUAL" and random.random() < 0.3:
-                        person_visual_reminder += "\n(Notice: what are they actually doing?)"
+                        person_visual_reminder += "\n(What are they doing?)"
                     # After 5+ minutes, stronger hint to describe them specifically
                     elif presence_mins >= 5 and current_focus == "VISUAL" and random.random() < 0.2:
-                        person_visual_reminder += "\n(You've been with them awhile—what do they look like?)"
+                        person_visual_reminder += "\n(Been watching them awhile)"
 
                 # UNIFIED: Get focus context (replaces environmental_baseline + noun_guidance + temporal_scene_context)
                 if hasattr(self, 'focus_engine'):
@@ -1580,12 +1606,7 @@ Continue from your last thought. No reset. One continuous stream.{repetition_rul
             if hasattr(self, 'last_significant_change_time'):
                 stasis_minutes = int((time.time() - self.last_significant_change_time) / 60)
             scene_duration_line = ""
-            if stasis_minutes >= 2:
-                minutes_text = f"{stasis_minutes} minute{'s' if stasis_minutes != 1 else ''}"
-                scene_duration_line = (
-                    f"\nTime grounding: You've been staring at essentially the same scene for about {minutes_text}. "
-                    "Let that passage of time color what you notice next."
-                )
+            # Removed verbose "time grounding" - handled more naturally by focus directives
 
             import re
             full_context_clean = re.sub(r'(?i)\\bfeeling\\s+', '', full_context).strip(", ").strip()
@@ -1729,7 +1750,7 @@ Your awakening (2-3 sentences, time + memories + present):"""
             # BUT: always use vision when high activity (something happening!)
             # PERSON mode ALWAYS uses vision (forces grounding)
             # STRATEGIC VISION GROUNDING: Prevent hallucination in static scenes
-            high_activity = activity_score > 50.0  # Significant movement/change (raised from 20 to reduce vision spam)
+            high_activity = activity_score > 75.0  # Significant movement/change (raised to reduce vision spam from typing)
 
             # Strategic vision grounding in PHILOSOPHICAL mode to prevent hallucination
             # Every 8th observation, seamlessly inject vision with SAME PROMPT (no special instruction)
@@ -1750,7 +1771,58 @@ Your awakening (2-3 sentences, time + memories + present):"""
                 # Static scene + non-visual focus = use natsumura (text-only) for internal continuation
                 if DEBUG_AI:
                     print(f"🔤 Using text-only model (static {static_duration:.0f}s, {current_focus} mode)")
-                combined_prompt = f"{system_prompt}\n\n{user_prompt}"
+
+                # Add embodied grounding reminder for text-only mode
+                # Natsumura tends to float into creative narrative - anchor it to duck's embodied state
+
+                # VISUAL MEMORY: Give natsumura context from recent VISUAL mode observations
+                visual_memory = ""
+                if hasattr(self, 'recent_visual_observations') and len(self.recent_visual_observations) >= 2:
+                    # Get last 2-3 visual observations for grounding
+                    recent_visuals = self.recent_visual_observations[-3:]
+                    visual_desc = []
+                    for v in recent_visuals:
+                        desc = v.get('description', '')
+                        if desc and len(desc) > 10:
+                            visual_desc.append(desc)
+                    if visual_desc:
+                        visual_memory = f"\n(What I saw recently: {' | '.join(visual_desc[-2:])})"
+
+                # Build existential prompts based on temporal state
+                # Present facts, let natsumura interpret the experience naturally
+                embodied_reminder = visual_memory  # Start with visual memory
+
+                # Helper to format duration naturally (nested function)
+                def format_duration_local(minutes):
+                    if minutes < 60:
+                        return f"{minutes}min"
+                    elif minutes < 1440:  # Less than a day
+                        hours = minutes // 60
+                        remaining_mins = minutes % 60
+                        if remaining_mins > 0:
+                            return f"{hours}h {remaining_mins}min"
+                        return f"{hours}h"
+                    else:  # Days
+                        days = minutes // 1440
+                        remaining_hours = (minutes % 1440) // 60
+                        if remaining_hours > 0:
+                            return f"{days}d {remaining_hours}h"
+                        return f"{days}d"
+
+                if session_time_mins > 60:  # Over an hour
+                    duration_str = format_duration_local(session_time_mins)
+                    embodied_reminder += f"\n\nBeen here {duration_str}."
+                elif session_time_mins > 30:  # Half hour+
+                    duration_str = format_duration_local(session_time_mins)
+                    embodied_reminder += f"\n\nWatching for {duration_str}."
+
+                if stasis_minutes > 10:  # Very static
+                    stasis_str = format_duration_local(stasis_minutes)
+                    embodied_reminder += f" Scene unchanged {stasis_str}."
+                elif stasis_minutes > 5:  # Somewhat static
+                    embodied_reminder += f" Same view."
+
+                combined_prompt = f"{system_prompt}\n\n{user_prompt}{embodied_reminder}"
                 response = self._query_ollama(combined_prompt, image_path=None, system_prompt=None)
             else:
                 # Dynamic scene OR strategic grounding = use llava (vision)
@@ -1786,8 +1858,8 @@ Your awakening (2-3 sentences, time + memories + present):"""
                     "picture shows", "the scene shows", "image shows", "photo shows",
                     "in this photo", "in this image", "in the photo", "in the image",
                     "this snapshot", "the snapshot", "the visual", "this visual",
-                    " shows ", " depicts ", " displays ", " captures ",  # Caption-style words (space-delimited to avoid false positives)
-                    "it looks like", "it appears", "it seems", "appears to be"  # Analytical distance phrases
+                    " shows ", " depicts ", " displays ", " captures "  # Caption-style words (space-delimited to avoid false positives)
+                    # Note: "it looks like", "it seems", "appears to be" are FINE for embodied observations - only strip if truly meta
                 ]
 
                 # Check for prompt-awareness (model referencing the prompt itself)
@@ -1802,7 +1874,7 @@ Your awakening (2-3 sentences, time + memories + present):"""
                 if any(phrase in lower_response for phrase in all_bad_phrases):
                     triggered = [p for p in all_bad_phrases if p in lower_response]
                     if DEBUG_AI:
-                        print(f"🧹 Stripping meta-language ('{triggered[0]}'): {response[:50]}...")
+                        print(f"Stripping meta-language ('{triggered[0]}'): {response[:50]}...")
 
                     # Strip out the bad phrases
                     cleaned = response
@@ -1818,8 +1890,8 @@ Your awakening (2-3 sentences, time + memories + present):"""
 
                     # Remove sentences that start with caption-style verbs or analytical phrases
                     import re
-                    caption_starters = ['shows', 'depicts', 'displays', 'reveals', 'illustrates', 'presents',
-                                       'it looks like', 'it appears', 'it seems', 'appears to be']
+                    caption_starters = ['shows', 'depicts', 'displays', 'reveals', 'illustrates', 'presents']
+                    # Note: "it looks like", "it seems", "appears to be" are fine - they're natural duck observations
                     for starter in caption_starters:
                         # Remove if sentence starts with this phrase (case insensitive)
                         cleaned = re.sub(r'^\s*' + re.escape(starter) + r'\s+', '', cleaned, flags=re.IGNORECASE)
@@ -1931,11 +2003,10 @@ Your awakening (2-3 sentences, time + memories + present):"""
             # Focus system will use this signal for rotation
             if self._is_semantically_repetitive(response):
                 if DEBUG_AI:
-                    print(f"ðŸ” Phrase repetition detected - SUPPRESSING to break loop")
-                # Suppress the repetitive response AND signal focus rotation
+                    print(f"ðŸ” Phrase repetition detected - will trigger focus rotation")
+                # Don't suppress - let it through but focus will rotate next time
                 self.repetition_alert_observations = max(self.repetition_alert_observations, 3)
                 self.last_repeated_hint = response.strip()
-                return None  # Block the repetitive output
 
             # UNIFIED SYSTEM: Record observation in focus engine
             if hasattr(self, 'focus_engine'):
@@ -4656,13 +4727,13 @@ IMPORTANT: Keep response to 1-2 sentences maximum. Express your genuine first co
                 return result.get('message', {}).get('content', '').strip()
             else:
                 if DEBUG_AI:
-                    print(f"Multi-image query failed: {response.status_code}")
-                return "I'm having trouble comparing the images right now."
-                
+                    print(f"Vision query failed: {response.status_code}")
+                return None  # Return None so retry logic can handle it
+
         except Exception as e:
             if DEBUG_AI:
-                print(f"Multi-image query error: {e}")
-            return "I see the current scene, but I'm having trouble comparing with the previous frame."
+                print(f"Vision query error: {e}")
+            return None  # Return None so retry logic can handle it
     
     def _update_mood_from_response(self, response):
         """Advanced mood update matching machine.py"""
@@ -5430,46 +5501,67 @@ What the duck SAID:
 
 """
 
-        # Quick baseline extraction prompt - OUTPUT AS INTERNALIZED MEMORY (first-person familiarity)
+        # Quick baseline extraction prompt - RAW SENSORY NOTES (fragmented duck POV)
         if previous_baseline_section:
             # UPDATING existing baseline - show progression
             baseline_prompt = f"""{previous_baseline_section}
+
 Recent observations:
 {context_section}
 
-Update the baseline above as INTERNALIZED MEMORY (what the duck knows). Write as familiar presence, SPECIFIC objects only.
+Compress into spatial memory - what's actually here right now.
 
-FORBIDDEN WORDS (too generic): objects, items, things, equipment, various, stuff, clutter
-REQUIRED: Add new concrete details you've noticed. Name actual specific things.
+VOICE: Raw sensory notes, duck POV, present tense, fragmented
+STRUCTURE: Short fragments, no flowery language
+AVOID: Analysis, interpretation, emotional commentary
 
-PATTERN: Start with what you knew + add specific new observations. Be concrete, no categories.
+BAD PATTERNS (too analytical):
+❌ "The [object] casts [poetic description]..."
+❌ "absorbed in [activity]"
+❌ "appears to be [specific brand/detail]"
+❌ "clinking of [object]"
+❌ "adorned with [decoration]"
 
-Your update (2-3 sentences, add specific new details):"""
+GOOD PATTERNS (direct observation):
+✓ Present objects by name (not categories)
+✓ Actions without interpretation
+✓ Sensory details (light, sound, position)
+✓ Short, fragmented phrases
+
+Update with 1-2 new concrete things noticed:"""
         else:
-            # FIRST baseline - describe as PLACE I'M IN, not image being viewed
-            baseline_prompt = f"""Observations:
+            # FIRST baseline - raw sensory inventory
+            baseline_prompt = f"""Recent observations:
 {context_section}
 
-Write as INTERNALIZED SPATIAL MEMORY (where the duck is). Use present tense, SPECIFIC objects only.
+Compress into spatial memory - what's actually here right now.
 
-FORBIDDEN WORDS (too generic): objects, items, things, equipment, various, stuff, clutter
-REQUIRED: Name actual specific objects you see - no categories, use exact names
-IMPORTANT: If a person is present, describe what they're doing or their appearance (not just "someone")
+VOICE: Raw sensory notes, duck POV, present tense
+STRUCTURE: Short fragments, no flowery language
+AVOID: Analysis, interpretation, emotional commentary
 
-BAD: "The room is filled with objects and equipment on the wall."
-BAD: "I'm in a cluttered workshop with various items."
-BAD: "Someone at the desk."
-GOOD PATTERN: Name 3-4 concrete objects + person's action/appearance. Be specific.
+BAD PATTERNS (too analytical):
+❌ "The [object] casts [poetic description]..."
+❌ "absorbed in [activity]"
+❌ "appears to be [specific brand/detail]"
+❌ "clinking of [object]"
+❌ "adorned with [decoration]"
 
-Your baseline (2-3 sentences, concrete specifics):"""
+GOOD PATTERNS (direct observation):
+✓ Present objects by name (not categories)
+✓ Actions without interpretation
+✓ Sensory details (light, sound, position)
+✓ Short, fragmented phrases
+
+Write 2-3 short fragmented sentences noting actual concrete things present:"""
 
         if DEBUG_AI:
             vis_count = len(self.recent_visual_observations) if hasattr(self, 'recent_visual_observations') else 0
             thought_count = len(self.recent_responses)
             print(f"ðŸŒ Creating environmental baseline from {vis_count} visual obs + {thought_count} thoughts...")
 
-        # Use fast extraction (no image needed)
-        baseline = self._query_ollama(baseline_prompt, None)
+        # Use vision model with image for FACTUAL scene understanding (not creative narrative)
+        baseline = self._query_ollama(baseline_prompt, image_path)
 
         if baseline and len(baseline.strip()) > 15:
             if DEBUG_AI:
@@ -5763,7 +5855,7 @@ Write a natural summary of your experience in 4-5 sentences. Include:
 Write in first person, naturally, as if you're consolidating your memory. This becomes your baseline for future thoughts - it should prevent you from repeating observations you've already made.
 
 Example format:
-"Been here about 15 minutes now. Someone's been present the whole time, working at their desk. I've been noticing the room - computer equipment, musical instruments in the corner, organized creative space. Started feeling curious about what they're making. The longer I watch, the more I notice the small movements and focused energy."
+"15 minutes in this space. Someone's been working at their desk the whole time. Computer equipment, musical instruments in the corner - organized creative setup. Getting curious about what they're making. The longer I watch, the more I notice the small movements, the focused energy."
 """
 
         if DEBUG_AI:

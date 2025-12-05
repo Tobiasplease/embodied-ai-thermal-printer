@@ -131,10 +131,10 @@ class FocusEngine:
 
         # Exhaustion detection thresholds
         self.exhaustion_thresholds = {
-            'VISUAL': 60,       # 1 minute - rotate quickly to avoid description loops
-            'EMOTIONAL': 45,    # 45 seconds - EMOTIONAL mode gets repetitive fast
-            'MEMORY': 90,       # 90 seconds
-            'PHILOSOPHICAL': 120  # 2 minutes for deep thinking
+            'VISUAL': 180,      # 3 minutes max before exhaustion check
+            'EMOTIONAL': 90,    # 90 seconds - EMOTIONAL mode gets repetitive fast
+            'MEMORY': 180,      # 3 minutes
+            'PHILOSOPHICAL': 300  # 5 minutes for deep thinking
         }
 
         # FOCUS STICKINESS: How resistant each mode is to interruption
@@ -159,8 +159,8 @@ class FocusEngine:
         self.visual_continuation_threshold = 0.35  # Was 0.15
 
         # Focus transition thresholds (dynamic, context-aware)
-        self.boredom_threshold = 30.0  # seconds of static content (was 45)
-        self.introspection_threshold = 60.0  # seconds before deep philosophy (was 120)
+        self.boredom_threshold = 45.0  # seconds of static content
+        self.introspection_threshold = 120.0  # seconds before deep philosophy
 
         # Current session tracking
         self.session_start = time.time()
@@ -240,23 +240,23 @@ class FocusEngine:
         else:
             signals.append("depth_plateau:no")
 
-        # Signal 4: Observation count - modes should rotate quickly for organic flow
-        if focus_mode == "VISUAL" and session.observation_count >= 5:
-            # VISUAL exhausts quickly - prevent endless description loops
-            obs_ratio = min(1.0, session.observation_count / 8)
+        # Signal 4: Observation count - modes should rotate after certain counts
+        if focus_mode == "VISUAL" and session.observation_count >= 15:
+            # VISUAL exhausts from sheer observation count, not just time
+            obs_ratio = min(1.0, session.observation_count / 20)
             obs_bonus = obs_ratio * 0.4
             score += obs_bonus
-            signals.append(f"obs_count:+{obs_bonus:.2f}({session.observation_count}/8)")
-        elif focus_mode == "EMOTIONAL" and session.observation_count >= 4:
+            signals.append(f"obs_count:+{obs_bonus:.2f}({session.observation_count}/20)")
+        elif focus_mode == "EMOTIONAL" and session.observation_count >= 8:
             # EMOTIONAL exhausts quickly - it tends to be repetitive
-            obs_ratio = min(1.0, session.observation_count / 6)
+            obs_ratio = min(1.0, session.observation_count / 12)
             obs_bonus = obs_ratio * 0.5  # Stronger bonus than VISUAL
             score += obs_bonus
-            signals.append(f"obs_count:+{obs_bonus:.2f}({session.observation_count}/6)")
+            signals.append(f"obs_count:+{obs_bonus:.2f}({session.observation_count}/12)")
         elif focus_mode == "VISUAL":
-            signals.append(f"obs_count:{session.observation_count}/5(not yet)")
+            signals.append(f"obs_count:{session.observation_count}/15(not yet)")
         elif focus_mode == "EMOTIONAL":
-            signals.append(f"obs_count:{session.observation_count}/4(not yet)")
+            signals.append(f"obs_count:{session.observation_count}/8(not yet)")
 
         # Signal 5: Time in focus
         duration = session.duration()
@@ -276,7 +276,7 @@ class FocusEngine:
     def is_focus_exhausted(self, focus_mode: str, repetition_detected: bool = False) -> bool:
         """Check if current focus mode is exhausted"""
         exhaustion_score = self.calculate_exhaustion_score(focus_mode, repetition_detected)
-        return exhaustion_score >= 0.5  # Exhaustion threshold (lowered to rotate faster)
+        return exhaustion_score >= 0.7  # Exhaustion threshold
 
     def record_observation(self, text: str, focus_mode: str):
         """Record an observation in the current focus session"""
@@ -457,7 +457,7 @@ class FocusEngine:
 
         # Check if current focus is exhausted - THIS TAKES PRIORITY
         exhaustion_score = self.calculate_exhaustion_score(self.current_focus, repetition_detected)
-        is_exhausted = exhaustion_score >= 0.5  # Match is_focus_exhausted threshold
+        is_exhausted = exhaustion_score >= 0.7  # Match is_focus_exhausted threshold
 
         if is_exhausted:
             # Mark this focus as recently exhausted (cooldown period)
@@ -545,6 +545,15 @@ class FocusEngine:
         if novelty_score < 0.5:
             # Allow current focus to persist and deepen
             return self._maintain_current_focus(state_analysis)
+
+        # === VISUAL MODE EXIT LOGIC ===
+        # If in VISUAL mode but activity has settled, return to PHILOSOPHICAL for narrative flow
+        # CHECK THIS FIRST before novelty continuation to allow exit
+        if self.current_focus == "VISUAL":
+            activity_score = state_analysis.get('visual', {}).get('activity_score', 0)
+            if activity_score < 60.0:  # Activity settled - vision no longer needed (typing/small movements)
+                print(f"👁️ Activity settled ({activity_score:.1f}) - exiting VISUAL mode")
+                return self._focus_philosophical(state_analysis, "activity_settled")
 
         # Moderate novelty in VISUAL mode - continue if threshold met
         if self.current_focus == "VISUAL" and novelty_score > self.visual_continuation_threshold:  # 0.35 (was 0.15)

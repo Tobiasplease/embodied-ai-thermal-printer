@@ -414,11 +414,16 @@ class EmbodiedAI:
         if not self.initialize():
             print("[ERROR] Initialization failed - cannot start")
             return
-        
+
         # Enable signal handling after successful init
         self.signals_armed = True
         self.running = True
         print("[STOP] Embodied AI v2 starting main loop...")
+
+        # Heartbeat tracking for crash detection
+        self.last_heartbeat = time.time()
+        self.frame_counter_for_heartbeat = 0
+        self.memory_warning_shown = False
         
         try:
             # Direct VideoCapture using configured camera index
@@ -450,6 +455,14 @@ class EmbodiedAI:
 
                 current_time = time.time()
                 self.frame_count += 1
+
+                # Heartbeat every 100 frames (~3 seconds at 30fps)
+                self.frame_counter_for_heartbeat += 1
+                if self.frame_counter_for_heartbeat >= 100:
+                    self.last_heartbeat = current_time
+                    self.frame_counter_for_heartbeat = 0
+                    if DEBUG_AI:
+                        print(f"💓 Heartbeat: frame {self.frame_count}, uptime {int(current_time - self.start_time)}s")
 
                 # Detect face movement for dynamic pacing (every 5 frames to save CPU)
                 if self.frame_count % 5 == 0:
@@ -510,9 +523,16 @@ class EmbodiedAI:
                 # Calculate dynamic interval based on scene activity
                 self.current_ai_interval = self._calculate_dynamic_interval()
 
-                # IMMEDIATE AI trigger on person arrival/departure (bypass interval)
-                # BUT reaction is queued, not forced immediately
-                force_ai_now = len(person_events) > 0
+                # IMMEDIATE AI trigger on major events (bypass interval)
+                # Person events OR major visual activity (lights turning on, movement, etc)
+                has_person_event = len(person_events) > 0
+
+                # Use activity score for reactivity (frame-based, immediate)
+                # High activity (>80) = major scene change happening NOW
+                has_high_activity = (activity_result is not None and
+                                    activity_result.get('activity_score', 0) > 80.0)
+
+                force_ai_now = has_person_event or has_high_activity
 
                 # AI processing in SEPARATE THREAD with dynamic interval
                 should_process_ai = (current_time - self.last_ai_process_time >= self.current_ai_interval) or force_ai_now
@@ -521,8 +541,10 @@ class EmbodiedAI:
                     # Only start new AI thread if previous one is complete
                     if self.ai_processing_lock.acquire(blocking=False):  # Non-blocking acquire
                         if DEBUG_AI:
-                            if force_ai_now:
+                            if has_person_event:
                                 print(f"[URGENT] PERSON EVENT - forcing immediate AI at frame {self.frame_count}")
+                            elif has_high_activity:
+                                print(f"[URGENT] HIGH ACTIVITY (score: {activity_result.get('activity_score', 0):.0f}) - forcing immediate AI at frame {self.frame_count}")
                             else:
                                 print(f"[AI] Starting AI thread at frame {self.frame_count}")
 
@@ -572,9 +594,13 @@ class EmbodiedAI:
             print("\n[STOP] Keyboard interrupt received")
         except Exception as e:
             print(f"[ERROR] Main loop error: {e}")
+            print(f"[ERROR] Last heartbeat: {int(time.time() - self.last_heartbeat)}s ago")
             if DEBUG_AI:
                 print(traceback.format_exc())
         finally:
+            print(f"[SHUTDOWN] Main loop exited at frame {self.frame_count}")
+            print(f"[SHUTDOWN] Total uptime: {int(time.time() - self.start_time)}s")
+
             # Clean up direct camera
             if 'cap' in locals():
                 cap.release()
@@ -584,6 +610,7 @@ class EmbodiedAI:
 
     def _ai_processing_thread(self, frame, timestamp, person_events=None):
         """AI processing in separate thread (EXACT machine.py pattern)"""
+        thread_start = time.time()
         try:
             if DEBUG_AI:
                 print(f"[AI] AI thread processing frame at {timestamp}")
@@ -781,14 +808,16 @@ class EmbodiedAI:
                                 print(f"[WARN] Projector clear error during silence: {e}")
         
         except Exception as e:
+            thread_time = time.time() - thread_start
+            print(f"[ERROR] AI thread error after {thread_time:.1f}s: {e}")
             if DEBUG_AI:
-                print(f"AI thread error: {e}")
                 print(traceback.format_exc())
         finally:
+            thread_time = time.time() - thread_start
             # Always release the AI processing lock
             self.ai_processing_lock.release()
             if DEBUG_AI:
-                print(f"[UNLOCK] AI processing lock released")
+                print(f"[UNLOCK] AI processing lock released (thread took {thread_time:.1f}s)")
     
     def _get_emotional_voice_params(self):
         """Get speed/pitch variations based on current emotion"""
@@ -1125,12 +1154,26 @@ class EmbodiedAI:
         overlay_y = frame_height - overlay_height - 15  # Bottom margin
         
         # Draw fitted semi-transparent background
-        overlay = frame.copy()
-        cv2.rectangle(overlay, 
-                     (int(overlay_x), int(overlay_y)), 
-                     (int(overlay_x + overlay_width), int(overlay_y + overlay_height)), 
-                     (0, 0, 0), -1)
-        frame = cv2.addWeighted(frame, 0.3, overlay, 0.7, 0)  # More subtle transparency
+        try:
+            overlay = frame.copy()
+            cv2.rectangle(overlay,
+                         (int(overlay_x), int(overlay_y)),
+                         (int(overlay_x + overlay_width), int(overlay_y + overlay_height)),
+                         (0, 0, 0), -1)
+            frame = cv2.addWeighted(frame, 0.3, overlay, 0.7, 0)  # More subtle transparency
+        except cv2.error as e:
+            # Out of memory - skip transparency, just draw solid background
+            if "memory" in str(e).lower():
+                if not self.memory_warning_shown:
+                    print("[WARN] Low memory detected - using simplified overlay")
+                    print("[WARN] Consider restarting soon to free memory")
+                    self.memory_warning_shown = True
+                cv2.rectangle(frame,
+                             (int(overlay_x), int(overlay_y)),
+                             (int(overlay_x + overlay_width), int(overlay_y + overlay_height)),
+                             (0, 0, 0), -1)
+            else:
+                raise
         
         # Draw text lines
         for i, line in enumerate(lines):

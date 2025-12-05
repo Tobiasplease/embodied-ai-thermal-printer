@@ -54,7 +54,7 @@ class DirectAudioLipSync:
 
         # Audio thresholds (lower = more sensitive, adjusted for better responsiveness)
         self.SILENCE_THRESHOLD = 20   # Very low = opens on even quiet sounds
-        self.MAX_AMPLITUDE = 3000     # Lower = reaches full open more easily
+        self.MAX_AMPLITUDE = 250      # Lower = reaches full open more easily (adjusted for typical amplitude 30-50)
 
         # Smoothing (higher = smoother, 0.0-1.0) - reduced for faster response
         self.last_angle = self.JAW_CLOSED
@@ -226,7 +226,9 @@ class DirectAudioLipSync:
                 # Analyze amplitude for jaw movement and callback timing
                 audio_array = np.frombuffer(data, dtype=np.int16)
                 if len(audio_array) > 0:
-                    amplitude = np.sqrt(np.mean(np.abs(audio_array)**2))
+                    # Calculate RMS amplitude with NaN protection
+                    rms = np.mean(np.abs(audio_array)**2)
+                    amplitude = np.sqrt(rms) if not np.isnan(rms) else 0
                 else:
                     amplitude = 0
 
