@@ -531,25 +531,37 @@ class PersonalityAI:
         self.last_observation_hash = None
         self.last_change_magnitude = 0.0  # For reactivity - allows main.py to force immediate AI on big changes
 
-        # RECURSIVE FEEDBACK SYSTEM (like legacy machine.py)
-        self.last_reflection_time = time.time()
-        # Compression stays at 5 minutes (it's heavy) but is more effective
-        self.reflection_interval = 600  # 10 minutes - prevents repetitive rediscovery
-        self.compression_count = 0  # Track how many compressions have happened
-        self.reflection_enabled = True
+        # THREE-TIER COMPRESSION SYSTEM
+        # Purpose: Optimize performance while maintaining memory quality
+        # Tier 1 (5min): Scene understanding - prevents surface repetition
+        # Tier 2 (10min): Episodic moments - captures specific events
+        # Tier 3 (30min): Deep synthesis - evolves understanding
 
-        # TWO-TIER COMPRESSION SYSTEM
-        # Tier 1: Environmental baseline (5 minutes) - lightweight scene understanding
+        self.compression_count = 0  # Track total compressions across all tiers
+        self.reflection_enabled = True  # Master switch for all compression
+
+        # TIER 1: Environmental Baseline (5 minutes) - LIGHT
+        # Purpose: "What's around me right now?"
+        # Output: Scene description to prevent immediate repetition
         self.last_environmental_compression = time.time()
-        self.environmental_compression_interval = 300  # 5 minutes - lightweight operation
-        self.environmental_baseline = ""  # "Person with glasses at workspace, focused on screen, creative studio"
-        self.environmental_baseline_created_at = None  # Timestamp when baseline was established
+        self.environmental_compression_interval = 300  # 5 minutes
+        self.environmental_baseline = ""  # "Workshop with person at desk, electronics workbench"
+        self.environmental_baseline_created_at = None
 
-        # Tier 2: Deep compression (5 minutes) - episodic memories, patterns, psychological themes
-        # Baseline understanding that grows over time (replaces "PAST INSIGHTS")
-        # Initialize BEFORE load_state() so it can be overwritten
-        self.baseline_context = ""  # Empty at start, updated by reflections
-        self.recent_visual_observations = []  # Track visual observations with person counts for compression
+        # TIER 2: Episodic Memory Extraction (10 minutes) - MEDIUM
+        # Purpose: "What happened in the last 10 minutes?"
+        # Output: 1-3 specific memorable moments added to episodic_memories
+        self.last_episodic_compression = time.time()
+        self.episodic_compression_interval = 600  # 10 minutes
+        # Note: Stores into self.memory_ref.episodic_memories
+
+        # TIER 3: Deep Psychological Synthesis (30 minutes) - HEAVY
+        # Purpose: "What does it all mean? How am I evolving?"
+        # Output: baseline_context, worldview_summary, existential_stance
+        self.last_deep_compression = time.time()
+        self.deep_compression_interval = 1800  # 30 minutes
+        self.baseline_context = ""  # Evolving understanding of self and environment
+        self.recent_visual_observations = []  # Track for deep compression
 
         # LIGHTWEIGHT FACT EXTRACTION (real-time, no heavy model)
         self.persistent_facts = set()  # Things that keep appearing: "laptop", "desk", "dim lighting"
@@ -857,8 +869,11 @@ class PersonalityAI:
                     # Update scene baseline now that we've accepted this observation
                     self._update_scene_baseline(visual_observation, temp_path)
 
-                    # RECURSIVE FEEDBACK SYSTEM - Check for reflection interval
-                    self._check_reflection_interval(language_response, temp_path)
+                    # THREE-TIER COMPRESSION SYSTEM
+                    # Tier 2: Episodic extraction (10 minutes)
+                    self._check_episodic_compression(language_response, temp_path)
+                    # Tier 3: Deep synthesis (30 minutes)
+                    self._check_deep_compression(language_response, temp_path)
 
                     # Periodic psychological theme extraction (every 7 observations)
                     if self.processing_count % 7 == 0 and len(self.recent_responses) >= 5:
@@ -2068,12 +2083,13 @@ Your awakening (2-3 sentences, time + memories + present):"""
             # LIGHTWEIGHT fact extraction (no heavy model, just keyword tracking)
             self._extract_persistent_facts(response)
 
-            # TWO-TIER COMPRESSION SYSTEM
-            # Check for environmental baseline compression (2 minutes)
+            # THREE-TIER COMPRESSION SYSTEM
+            # Tier 1: Environmental baseline (5 minutes)
             self._check_environmental_compression(temp_path)
-
-            # RECURSIVE FEEDBACK SYSTEM - Check for deep reflection interval (5 minutes)
-            self._check_reflection_interval(response, temp_path)
+            # Tier 2: Episodic extraction (10 minutes)
+            self._check_episodic_compression(response, temp_path)
+            # Tier 3: Deep synthesis (30 minutes)
+            self._check_deep_compression(response, temp_path)
 
             return response
 
@@ -4477,9 +4493,12 @@ Your stream of consciousness flows authentically from this experience."""
         self.processing_count += 1
         self._update_mood_from_response(response)
         self.memory_ref.add_observation(response, confidence=0.8)
-        
-        # RECURSIVE FEEDBACK SYSTEM - Check for reflection interval
-        self._check_reflection_interval(response, "temp_analysis.jpg")
+
+        # THREE-TIER COMPRESSION SYSTEM
+        # Tier 2: Episodic extraction (10 minutes)
+        self._check_episodic_compression(response, "temp_analysis.jpg")
+        # Tier 3: Deep synthesis (30 minutes)
+        self._check_deep_compression(response, "temp_analysis.jpg")
     
     def _generate_internal_awakening(self):
         """Internal awakening phase - pure consciousness emergence using machine.py depth"""
@@ -5335,7 +5354,10 @@ IMPORTANT: Keep response to 1-2 sentences maximum. Express your genuine first co
                 # TEMPORAL AWARENESS fields
                 'baseline_history': self.baseline_history[-5:] if hasattr(self, 'baseline_history') else [],  # Last 5 baseline changes
                 'last_baseline_update': self.last_baseline_update if hasattr(self, 'last_baseline_update') else 0,  # When baseline was last updated
-                'last_reflection_time': self.last_reflection_time,  # CRITICAL: When compression last ran (for 5-min interval)
+                # THREE-TIER COMPRESSION timestamps
+                'last_episodic_compression': self.last_episodic_compression,  # Tier 2: 10-minute episodic extraction
+                'last_deep_compression': self.last_deep_compression,  # Tier 3: 30-minute deep synthesis
+                'last_reflection_time': self.last_reflection_time,  # Legacy field (kept for compatibility)
                 'timestamp': time.time(),  # CRITICAL: When this state was saved (for calculating sleep duration)
                 'environmental_baseline': self.environmental_baseline  # CRITICAL: Environmental facts
             }
@@ -5438,10 +5460,18 @@ IMPORTANT: Keep response to 1-2 sentences maximum. Express your genuine first co
             self.baseline_history = state.get('baseline_history', [])
             self.last_baseline_update = state.get('last_baseline_update', time.time())
 
+            # THREE-TIER COMPRESSION: Restore timestamps for all tiers
+            # Note: Old saves won't have episodic/deep timestamps - they'll default to now
+            self.last_episodic_compression = state.get('last_episodic_compression', time.time())
+            self.last_deep_compression = state.get('last_deep_compression', time.time())
+
+            # Legacy field - kept for backward compatibility but no longer used
             self.last_reflection_time = state.get('last_reflection_time', self.true_session_start)
-            if DEBUG_AI and self.last_reflection_time:
-                time_since_reflection = time.time() - self.last_reflection_time
-                print(f"Last compression: {time_since_reflection:.0f}s ago (next at {self.reflection_interval}s)")
+
+            if DEBUG_AI:
+                episodic_time = time.time() - self.last_episodic_compression
+                deep_time = time.time() - self.last_deep_compression
+                print(f"Compression timers: Episodic {episodic_time:.0f}s ago (10min), Deep {deep_time:.0f}s ago (30min)")
 
             if DEBUG_AI:
                 print(f"Advanced personality state loaded: {len(self.memory_ref.observations)} observations, {len(self.memory_ref.beliefs)} beliefs, awakening_done={self.awakening_done}")
@@ -5514,6 +5544,49 @@ IMPORTANT: Keep response to 1-2 sentences maximum. Express your genuine first co
 
             # Update time after compression completes
             self.last_reflection_time = time.time()
+
+    def _check_episodic_compression(self, last_response, image_path):
+        """TIER 2: Check if it's time for episodic memory extraction (10 minutes - MEDIUM weight)"""
+        if not self.reflection_enabled:
+            return
+
+        current_time = time.time()
+        time_since_episodic = current_time - self.last_episodic_compression
+
+        if DEBUG_AI:
+            print(f"[EPISODIC] Check: {time_since_episodic:.0f}s since last (need {self.episodic_compression_interval}s)")
+
+        if time_since_episodic >= self.episodic_compression_interval:
+            if DEBUG_AI:
+                print(f"[EPISODIC] Extracting memories after {time_since_episodic:.0f}s (~3s)")
+
+            # Extract specific memorable moments from last 10 minutes
+            self._extract_episodic_memories(image_path)
+
+            # Update time after extraction completes
+            self.last_episodic_compression = time.time()
+
+    def _check_deep_compression(self, last_response, image_path):
+        """TIER 3: Check if it's time for deep psychological synthesis (30 minutes - HEAVY weight)"""
+        if not self.reflection_enabled:
+            return
+
+        current_time = time.time()
+        time_since_deep = current_time - self.last_deep_compression
+
+        if DEBUG_AI:
+            print(f"[DEEP] Check: {time_since_deep:.0f}s since last (need {self.deep_compression_interval}s)")
+
+        if time_since_deep >= self.deep_compression_interval:
+            if DEBUG_AI:
+                print(f"[DEEP] Psychological synthesis after {time_since_deep:.0f}s (~10-14s)")
+
+            # DEEP SYNTHESIS: Evolve baseline_context, worldview, existential stance
+            # This is the heavy operation - runs every 30 minutes instead of 10
+            self._compress_memory_on_reflection(image_path)
+
+            # Update time after compression completes
+            self.last_deep_compression = time.time()
 
     def _create_environmental_baseline(self, image_path):
         """Create lightweight environmental baseline from recent observations (2 minutes)
@@ -5846,11 +5919,113 @@ TASK: Silently consolidate recent experiences into baseline understanding.
 Keep brief (2 sentences). This consolidation is invisible background processing."""
 
         return self._query_ollama(reflection_prompt, image_path)
-    
+
+    def _extract_episodic_memories(self, image_path):
+        """
+        TIER 2 COMPRESSION: Extract specific memorable moments from last 10 minutes (MEDIUM weight)
+
+        Purpose: Capture concrete events to prevent rediscovery ("I already noticed that")
+        Output: 1-3 episodic memories added to self.memory_ref.episodic_memories
+        Performance: Fast (~2-3 seconds) - simple extraction, no deep synthesis
+        """
+        # Don't extract if we don't have enough observations yet
+        if len(self.recent_responses) < 3:
+            if DEBUG_AI:
+                print(f"[EPISODIC] Not enough observations yet (have {len(self.recent_responses)}, need 3)")
+            return
+
+        # Get last 10 minutes of thoughts for context
+        recent_thoughts = " → ".join(self.recent_responses[-10:]) if len(self.recent_responses) >= 10 else " → ".join(self.recent_responses)
+
+        # Build lightweight extraction prompt
+        # Optimized: No image, just text processing for speed
+        # Access to recent thoughts + environmental baseline for context
+        extraction_prompt = f"""Quick memory extraction - what specific moments are worth remembering?
+
+ENVIRONMENTAL CONTEXT:
+{self.environmental_baseline if self.environmental_baseline else "No baseline yet"}
+
+RECENT THOUGHTS (last 10 minutes):
+{recent_thoughts}
+
+TASK: Extract 1-3 specific memorable moments from the above.
+Focus on: Events that happened, changes you noticed, specific observations that stood out
+
+Requirements:
+- Be specific (include timing if mentioned: "Someone arrived around 2:15")
+- Only notable moments (if nothing significant happened, say "Nothing notable")
+- Brief phrases (max 10 words each)
+- Don't repeat things from environmental context
+
+Format:
+- [Your moment 1]
+- [Your moment 2]
+- [Your moment 3]
+
+Moments:"""
+
+        # Query LLM for extraction (text-only, no image = faster)
+        from config import SUBCONSCIOUS_MODEL, OLLAMA_URL
+        import requests
+
+        try:
+            data = {
+                "model": SUBCONSCIOUS_MODEL,  # Use text-only model for speed
+                "prompt": extraction_prompt,
+                "stream": False,
+                "options": {
+                    "temperature": 0.7,
+                    "num_predict": 100  # Brief responses only
+                }
+            }
+
+            response = requests.post(f"{OLLAMA_URL}/api/generate", json=data, timeout=30)
+
+            if response.status_code == 200:
+                result = response.json()
+                moments_text = result.get('response', '').strip()
+
+                if moments_text and "nothing notable" not in moments_text.lower():
+                    # Parse moments (lines starting with -)
+                    import re
+                    moments = re.findall(r'-\s*(.+)', moments_text)
+
+                    # Add to episodic memories
+                    current_emotion = self.current_emotion if hasattr(self, 'current_emotion') else 'neutral'
+
+                    for moment in moments[:3]:  # Max 3 moments
+                        if moment.strip():
+                            memory = {
+                                'timestamp': time.time(),
+                                'content': moment.strip(),
+                                'importance': 0.7,  # Medium importance
+                                'emotion': current_emotion,
+                                'context': {}
+                            }
+                            self.memory_ref.episodic_memories.append(memory)
+
+                            if DEBUG_AI:
+                                print(f"[EPISODIC] Captured: {moment.strip()}")
+
+                    # Limit total episodic memories to prevent bloat
+                    if len(self.memory_ref.episodic_memories) > 50:
+                        # Keep most recent 50
+                        self.memory_ref.episodic_memories = self.memory_ref.episodic_memories[-50:]
+
+                elif DEBUG_AI:
+                    print(f"[EPISODIC] Nothing notable in last 10 minutes")
+
+        except Exception as e:
+            if DEBUG_AI:
+                print(f"[EPISODIC] Extraction error: {e}")
+
     def _compress_memory_on_reflection(self, current_image_path):
         """
-        SELF-REFLECTIVE CONSOLIDATION using main model (LLaVA) with image.
-        This is slow-drip reasoning where the duck consolidates its evolving understanding.
+        TIER 3 COMPRESSION: Deep psychological synthesis (HEAVY weight) - runs every 30 minutes
+
+        Purpose: Evolve baseline understanding, worldview, existential stance
+        Output: Updates baseline_context, worldview_summary, existential_stance
+        Performance: Slow (~10-14 seconds) - complex synthesis with image
         """
         # Don't compress if we don't have enough observations yet
         if len(self.recent_responses) < 5:
