@@ -474,10 +474,10 @@ class EmbodiedAI:
                 presence_state = None
                 if self.frame_count % 5 == 0:
                     if self.personality and hasattr(self.personality, 'person_tracker'):
-                        # Lightweight denoising for overheating systems - use bilateral filter
-                        # Much faster than fastNlMeansDenoising, generates less heat
-                        denoised_frame = cv2.bilateralFilter(frame, 5, 50, 50)
-                        person_data = self.personality.person_tracker.analyze_frame(denoised_frame)
+                        # DENOISING DISABLED: Causes memory allocation errors
+                        # Use raw frame instead - person tracker is robust enough
+                        # denoised_frame = cv2.bilateralFilter(frame, 5, 50, 50)
+                        person_data = self.personality.person_tracker.analyze_frame(frame)
                         person_events = person_data.get('events', [])
                         presence_state = person_data.get('presence_state', None)
 
@@ -569,8 +569,9 @@ class EmbodiedAI:
                     display_frame = self._draw_person_detections(display_frame)
 
                     # Apply live captioning subtitle system
-                    if hasattr(self, 'current_subtitle') and self.current_subtitle:
-                        display_frame = self._draw_live_caption_overlay(display_frame)
+                    # DISABLED: Using projector only, camera overlay causes memory allocation errors
+                    # if hasattr(self, 'current_subtitle') and self.current_subtitle:
+                    #     display_frame = self._draw_live_caption_overlay(display_frame)
 
                     # DISPLAY (EXACT machine.py pattern)
                     cv2.imshow("[BOT] AI Inner Monologue", display_frame)

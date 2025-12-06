@@ -86,7 +86,7 @@ DEBUG_MOTOR = False   # Motor control debug
 VERBOSE_OUTPUT = False  # Extra verbose logging
 
 # Thermal Printer Settings
-THERMAL_PRINTER_ENABLED = True
+THERMAL_PRINTER_ENABLED = False  # Disabled - not currently used
 THERMAL_PRINTER_NAME = "XP-80"  # Default thermal printer name
 
 # Voice Settings
