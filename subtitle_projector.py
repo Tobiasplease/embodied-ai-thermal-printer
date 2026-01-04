@@ -25,7 +25,7 @@ except ImportError:
 
 class SubtitleProjector:
     """Subtitle display window (runs in separate process)"""
-    def __init__(self, port=9998, audio_file=None, audio_volume=0.3):
+    def __init__(self, port=9998, audio_file=None, audio_volume=0.3, start_fullscreen=False):
         self.root = tk.Tk()
         self.root.title("Duck Consciousness - Subtitle Projector")
 
@@ -35,6 +35,12 @@ class SubtitleProjector:
 
         # Track fullscreen state
         self.is_fullscreen = False
+
+        # Check if we should start in fullscreen (exhibition mode)
+        if start_fullscreen or os.environ.get('EXHIBITION_MODE') == '1':
+            # Schedule fullscreen activation after window is fully initialized
+            self.root.after(100, lambda: self.root.attributes('-fullscreen', True))
+            self.is_fullscreen = True
 
         # Track mirror state for back-projection
         self.is_mirrored = False
@@ -49,12 +55,13 @@ class SubtitleProjector:
             self._init_audio()
 
         # Keyboard controls - properly toggle fullscreen
-        self.root.bind('<Escape>', self.exit_fullscreen)
+        self.root.bind('<Escape>', self.exit_fullscreen_or_quit)
         self.root.bind('<F11>', self.toggle_fullscreen)
         self.root.bind('m', self.toggle_mirror)
         self.root.bind('M', self.toggle_mirror)
-        self.root.bind('q', lambda e: self.root.quit())
-        self.root.bind('<Control-q>', lambda e: self.root.quit())
+        self.root.bind('q', lambda e: self.quit_projector())
+        self.root.bind('Q', lambda e: self.quit_projector())
+        self.root.bind('<Control-q>', lambda e: self.quit_projector())
 
         # Audio controls
         if self.audio_file:
@@ -71,7 +78,7 @@ class SubtitleProjector:
         self.subtitle_font = font.Font(family='Arial', size=16, weight='normal')
         self.subtitle_label = tk.Label(
             self.container,
-            text="",
+            text="Loading duck consciousness...",  # Show loading message immediately
             font=self.subtitle_font,
             fg='yellow',
             bg='black',
@@ -84,7 +91,10 @@ class SubtitleProjector:
         self.subtitle_label.pack(expand=True, padx=50, pady=50)  # Extra margins
 
         # Store current text for mirror updates
-        self.current_text = ""
+        self.current_text = "Loading duck consciousness..."
+
+        # Clear loading message after 3 seconds
+        self.root.after(3000, lambda: self._update_subtitle(""))
 
         # Socket server for receiving subtitles
         self.port = port
@@ -108,6 +118,19 @@ class SubtitleProjector:
         self.is_fullscreen = False
         self.root.attributes('-fullscreen', False)
         return "break"  # Prevent event propagation
+
+    def exit_fullscreen_or_quit(self, event=None):
+        """Exit fullscreen if fullscreen, otherwise quit"""
+        if self.is_fullscreen:
+            return self.exit_fullscreen(event)
+        else:
+            return self.quit_projector()
+
+    def quit_projector(self):
+        """Cleanly quit the projector"""
+        self.running = False
+        self.root.quit()
+        return "break"
 
     def toggle_mirror(self, event=None):
         """Toggle horizontal mirroring for back-projection
@@ -314,7 +337,7 @@ class SubtitleProjector:
 
 class SubtitleProjectorClient:
     """Client interface for sending subtitles from main.py"""
-    def __init__(self, port=9998, audio_file=None, audio_volume=0.3):
+    def __init__(self, port=9998, audio_file=None, audio_volume=0.3, start_fullscreen=False):
         self.port = port
         self.process = None
 
@@ -337,6 +360,8 @@ class SubtitleProjectorClient:
             if audio_file:
                 cmd.extend(['--audio', audio_file])
                 cmd.extend(['--volume', str(audio_volume)])
+            if start_fullscreen:
+                cmd.append('--fullscreen')
 
             self.process = subprocess.Popen(
                 cmd,
@@ -397,15 +422,24 @@ if __name__ == "__main__":
         parser.add_argument('port', type=int, nargs='?', default=9998)
         parser.add_argument('--audio', type=str, default=None, help='Path to audio file for ambient background')
         parser.add_argument('--volume', type=float, default=0.3, help='Audio volume (0.0-1.0)')
+        parser.add_argument('--fullscreen', action='store_true', help='Start in fullscreen mode')
         args = parser.parse_args()
 
         print(f"Starting Subtitle Projector window (port {args.port})...")
-        print("Press F11 for fullscreen, ESC to exit fullscreen, M to mirror, Q to quit")
+        if args.fullscreen:
+            print("Exhibition mode: Starting in fullscreen")
+        else:
+            print("Press F11 for fullscreen, ESC to exit fullscreen, M to mirror, Q to quit")
         if args.audio:
             print(f"Background audio: {args.audio} (volume: {args.volume:.0%})")
             print("Press A to toggle audio, +/- to adjust volume")
 
-        projector = SubtitleProjector(port=args.port, audio_file=args.audio, audio_volume=args.volume)
+        projector = SubtitleProjector(
+            port=args.port,
+            audio_file=args.audio,
+            audio_volume=args.volume,
+            start_fullscreen=args.fullscreen
+        )
         projector.run()
     else:
         # Test mode - launch as client

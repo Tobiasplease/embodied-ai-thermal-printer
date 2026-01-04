@@ -407,10 +407,15 @@ class EmbodiedAI:
             if SUBTITLE_PROJECTOR_ENABLED and PROJECTOR_AVAILABLE:
                 print("[PROJECT] Initializing subtitle projector...")
                 try:
+                    # Check if running in exhibition mode (auto-fullscreen)
+                    import os
+                    exhibition_mode = os.environ.get('EXHIBITION_MODE') == '1'
+
                     # Pass audio settings from config (set to None in config to disable)
                     self.subtitle_projector = SubtitleProjectorClient(
                         audio_file=SUBTITLE_PROJECTOR_AUDIO,
-                        audio_volume=SUBTITLE_PROJECTOR_AUDIO_VOLUME
+                        audio_volume=SUBTITLE_PROJECTOR_AUDIO_VOLUME,
+                        start_fullscreen=exhibition_mode
                     )
                     print("[OK] Subtitle projector ready (fullscreen)")
                     if SUBTITLE_PROJECTOR_AUDIO:
