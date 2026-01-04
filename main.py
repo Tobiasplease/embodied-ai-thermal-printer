@@ -42,6 +42,7 @@ from config import (
     LIPSYNC_ENABLED, LIPSYNC_PORT, LIPSYNC_BAUD,
     LIGHTBULB_ENABLED, LIGHTBULB_PORT, LIGHTBULB_BAUD,
     SUBTITLE_PROJECTOR_ENABLED, SUBTITLE_PROJECTOR_FONT_SIZE, SUBTITLE_PROJECTOR_COLOR,
+    SUBTITLE_PROJECTOR_AUDIO, SUBTITLE_PROJECTOR_AUDIO_VOLUME,
     OLLAMA_URL
 )
 
@@ -406,8 +407,18 @@ class EmbodiedAI:
             if SUBTITLE_PROJECTOR_ENABLED and PROJECTOR_AVAILABLE:
                 print("[PROJECT] Initializing subtitle projector...")
                 try:
-                    self.subtitle_projector = SubtitleProjectorClient()
+                    # Pass audio settings from config (set to None in config to disable)
+                    self.subtitle_projector = SubtitleProjectorClient(
+                        audio_file=SUBTITLE_PROJECTOR_AUDIO,
+                        audio_volume=SUBTITLE_PROJECTOR_AUDIO_VOLUME
+                    )
                     print("[OK] Subtitle projector ready (fullscreen)")
+                    if SUBTITLE_PROJECTOR_AUDIO:
+                        import os
+                        if os.path.exists(SUBTITLE_PROJECTOR_AUDIO):
+                            print(f"[AUDIO] Background audio: {os.path.basename(SUBTITLE_PROJECTOR_AUDIO)} ({SUBTITLE_PROJECTOR_AUDIO_VOLUME:.0%})")
+                        else:
+                            print(f"[WARN] Audio file not found: {SUBTITLE_PROJECTOR_AUDIO}")
                 except Exception as e:
                     print(f"[WARN] Subtitle projector disabled: {e}")
                     self.subtitle_projector = None

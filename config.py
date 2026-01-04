@@ -133,3 +133,7 @@ MIN_CAPTION_INTERVAL = 5.0  # minimum seconds between captions
 SUBTITLE_PROJECTOR_ENABLED = True  # Enable fullscreen subtitle projector for installation
 SUBTITLE_PROJECTOR_FONT_SIZE = 48  # Font size for projected subtitles
 SUBTITLE_PROJECTOR_COLOR = "yellow"  # Color of projected subtitles
+
+# Background ambient audio (optional - set to None to disable)
+SUBTITLE_PROJECTOR_AUDIO = r"C:\Users\tobia\Desktop\drone.wav"  # Path to audio file
+SUBTITLE_PROJECTOR_AUDIO_VOLUME = 0.3  # Volume (0.0 = silent, 1.0 = max)
