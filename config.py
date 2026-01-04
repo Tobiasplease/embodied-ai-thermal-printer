@@ -44,25 +44,26 @@ OLLAMA_URL = "http://localhost:11434"
 # === ARCHITECTURE MODE TOGGLE ===
 # Set to True to use single multimodal model for both vision + language
 # Set to False to use dual-model architecture (separate vision + language)
-SINGLE_MODEL_MODE = True  # Single multimodal model (LLaVA)
+SINGLE_MODEL_MODE = True  # ⭐ ACTIVE: Using LLaVA for vision
 
-# === DUAL-MODEL MODE (when SINGLE_MODEL_MODE = False) ===
+# === SINGLE-MODEL MODE SETTINGS (ACTIVE) ===
+# LLaVA handles all visual observations
+# Text-only model for introspection (MEMORY, PHILOSOPHICAL, EMOTIONAL modes)
+SINGLE_MULTIMODAL_MODEL = "llava:7b-v1.6-mistral-q5_1"  # 6.1GB - vision model ⭐ ACTIVE
+
+# Choose text-only introspection model (pick ONE):
+SUBCONSCIOUS_MODEL = "Tohur/natsumura-storytelling-rp-llama-3.1:8b"  # 4.9GB - best personality, slower (~10s) ⭐ ACTIVE
+# SUBCONSCIOUS_MODEL = "llama3.2:3b"  # 2.0GB - good quality, fits with LLaVA in VRAM (~2s)
+# SUBCONSCIOUS_MODEL = "smollm2:1.7b"  # 1.8GB - very fast, fits with LLaVA in VRAM (~1s)
+
+# === DUAL-MODEL MODE (NOT ACTIVE - for reference only) ===
 # Option 4: ULTRA LIGHT (fastest) - 3.5GB total
 OLLAMA_MODEL = "moondream:latest"  # 1.7GB vision - fast, occasional glitches
 # SUBCONSCIOUS_MODEL = "smollm2:1.7b"  # 1.8GB language - very fast but low quality
 
-# === TEXT-ONLY INTROSPECTION MODEL (used in both modes) ===
-# Used for: non-visual focus modes (EMOTIONAL, MEMORY, PHILOSOPHICAL), deep compression
-SUBCONSCIOUS_MODEL = "Tohur/natsumura-storytelling-rp-llama-3.1:8b"  # 4.9GB - better personality ⭐ ACTIVE
-
 # Option 8: MINICPM-V + SMOLLM2 (better vision, fast language) - 7.3GB total (too slow)
 # OLLAMA_MODEL = "minicpm-v:8b"  # 5.5GB vision - more stable than moondream
 # SUBCONSCIOUS_MODEL = "smollm2:1.7b"  # 1.8GB language - very fast
-
-# === SINGLE-MODEL MODE (when SINGLE_MODEL_MODE = True) ===
-# Use one multimodal model for both vision + language
-# This model is ONLY used when SINGLE_MODEL_MODE = True
-SINGLE_MULTIMODAL_MODEL = "llava:7b-v1.6-mistral-q5_1"  # 6.1GB - already downloaded
 
 AI_PROCESS_INTERVAL = 8.0  # seconds between AI processing - slower for stability
 USE_SOPHISTICATED_PROMPTS = False  # Testing hybrid focus-aware legacy system

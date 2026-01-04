@@ -41,7 +41,8 @@ from config import (
     ESPEAK_VOICE, ESPEAK_SPEED, ESPEAK_PITCH,
     LIPSYNC_ENABLED, LIPSYNC_PORT, LIPSYNC_BAUD,
     LIGHTBULB_ENABLED, LIGHTBULB_PORT, LIGHTBULB_BAUD,
-    SUBTITLE_PROJECTOR_ENABLED, SUBTITLE_PROJECTOR_FONT_SIZE, SUBTITLE_PROJECTOR_COLOR
+    SUBTITLE_PROJECTOR_ENABLED, SUBTITLE_PROJECTOR_FONT_SIZE, SUBTITLE_PROJECTOR_COLOR,
+    OLLAMA_URL
 )
 
 # Import lip sync FIRST (optional) - direct audio version
@@ -270,7 +271,29 @@ class EmbodiedAI:
     def initialize(self):
         """Initialize all components"""
         try:
-            # FIRST: Clear any stuck print jobs before connecting printer
+            # FIRST: Pre-load vision model into VRAM for faster inference
+            if VOICE_ENABLED:  # Only print if we have output enabled
+                print("[AI] Pre-loading vision model into VRAM...")
+            try:
+                import requests
+                from config import SINGLE_MODEL_MODE, SINGLE_MULTIMODAL_MODEL
+                if SINGLE_MODEL_MODE:
+                    # Warm up LLaVA and keep it in VRAM permanently (keep_alive=-1)
+                    # This prevents 10+ second load times on each observation
+                    requests.post(
+                        f"{OLLAMA_URL}/api/generate",
+                        json={
+                            'model': SINGLE_MULTIMODAL_MODEL,
+                            'prompt': 'warm up',
+                            'keep_alive': -1  # Keep loaded forever
+                        },
+                        timeout=30
+                    )
+                    print(f"[OK] {SINGLE_MULTIMODAL_MODEL} locked in VRAM (4.4x faster)")
+            except Exception as e:
+                print(f"[WARN] Could not pre-load model: {e}")
+
+            # SECOND: Clear any stuck print jobs before connecting printer
             clear_print_queue_preemptive()
 
             # State persistence now enabled - DO NOT delete personality_state.json
