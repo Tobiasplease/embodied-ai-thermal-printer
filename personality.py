@@ -1644,22 +1644,44 @@ You are continuing one unbroken stream of consciousness. No reset.{repetition_ru
             if context_line:  # Environmental baseline + deep compression
                 env_context = f"\n{context_line}"
 
-            # Build embodied state description (WHO you are, HOW you feel, WHERE you are)
+            # ===================================================================
+            # STRUCTURED PROMPT CONSTRUCTION (semantically coherent)
+            # ===================================================================
+            # Structure: WHAT YOU KNOW → RECENT THOUGHTS → CURRENT TASK
+            # Each section has clear semantic purpose, no random concatenation
+
             session_time_mins = int((time.time() - self.current_session_start) / 60)
-            embodied_state = f"Awake {session_time_mins}m. {full_context_clean}."
 
-            # Add presence if relevant
-            if presence_context_line:
-                embodied_state += f" {presence_context_line.strip()}"
+            # SECTION 1: WHAT YOU KNOW (established facts about your situation)
+            knowledge_section = []
 
-            # Add what you already know (baseline)
+            # Time awareness (how long you've been awake)
+            knowledge_section.append(f"Awake {session_time_mins}m")
+
+            # Your current state (emotional/energy from full_context_clean)
+            if full_context_clean:
+                knowledge_section.append(full_context_clean)
+
+            # Environmental baseline (what's around you - FACTUAL)
             if env_context:
-                embodied_state += f" {env_context.strip()}"
+                # Clean up any "The image shows" prefix if it leaked through
+                env_clean = env_context.strip()
+                env_clean = re.sub(r'^(the image shows|this image shows)\s*', '', env_clean, flags=re.IGNORECASE)
+                knowledge_section.append(env_clean)
 
-            # Build as: STATE first, then STREAM continuation
-            context_block = f"""{embodied_state}
+            # Presence awareness (who's here)
+            if presence_context_line:
+                knowledge_section.append(presence_context_line.strip())
 
-Your thoughts so far: {thought_context}"""
+            what_you_know = ". ".join(knowledge_section) + "."
+
+            # SECTION 2: RECENT THOUGHTS (what you've been thinking about)
+            recent_thoughts_section = f"Your thoughts so far: {thought_context}"
+
+            # SECTION 3: Assemble context block (clean, structured)
+            context_block = f"""{what_you_know}
+
+{recent_thoughts_section}"""
             # Let the duck explore naturally - don't over-constrain
 
             repetition_active = False
@@ -2905,6 +2927,18 @@ Your awakening (2-3 sentences, time + memories + present):"""
             r"narrative progression",
             r"recent observations reveal",
             r"my perception has changed",
+            # IMAGE/PHOTO LANGUAGE (critical - removes disembodied camera talk)
+            r"^the image shows\s*",
+            r"^this image shows\s*",
+            r"^the image depicts\s*",
+            r"^the photo shows\s*",
+            r"^the scene shows\s*",
+            r"^in (the|this) image[,:]?\s*",
+            r"^in (the|this) photo[,:]?\s*",
+            # META TIME LANGUAGE (removes LLM saying "I've been here X days")
+            r"^i've been here for \d+.*?\.",
+            r"^i've been watching for \d+.*?\.",
+            r"^my perception.*?(has|have) (become|grown|evolved).*?\.",
         ]
 
         cleaned = text
@@ -2915,12 +2949,15 @@ Your awakening (2-3 sentences, time + memories + present):"""
         cleaned = re.sub(r'"\s*$', '', cleaned)  # Dangling quotes
         cleaned = re.sub(r'\s+', ' ', cleaned)  # Normalize whitespace
 
-        # Remove sentences that start with meta-language
+        # Remove sentences that start with meta-language OR image-description language
         sentences = cleaned.split('.')
         filtered_sentences = []
         for sent in sentences:
             sent = sent.strip()
             if not sent:
+                continue
+            # Skip sentences that are pure image description
+            if re.match(r'^\s*(the|this) (image|photo|picture|scene) (shows|depicts|contains|features|displays)', sent, re.IGNORECASE):
                 continue
             # Skip sentences starting with meta-descriptors
             if re.match(r'^(as i|continuing to|i continue to|observing|based on)', sent, re.IGNORECASE):
