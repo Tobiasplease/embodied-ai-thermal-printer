@@ -92,8 +92,15 @@ class FocusEngine:
 
         # PERSON MODE TRACKING: Prevent spam, maintain cooldown
         self.last_person_observation = 0  # Timestamp of last PERSON mode
-        self.person_cooldown = 120  # 2 minutes between person observations
+        self.person_cooldown = 30  # 30 seconds between person observations (was 120 - more responsive for exhibition)
         self.last_person_visual_detail = ""  # What we noticed about the person
+
+        # PRESENCE MEMORY: Track observations during continuous presence
+        # Resets when person leaves, prevents rediscovery spam
+        self.current_presence_id = 0  # Increments each time someone arrives (distinguishes visits)
+        self.current_presence_observations = []  # Observations made during this presence
+        self.max_observations_per_presence = 3  # Max observations before letting them exist in peace
+        self.last_presence_count = 0  # Track count changes to detect arrivals/departures
 
         # Scene-level tracking (unified temporal + scene awareness)
         self.scene_nouns = set()  # Current scene elements
@@ -497,12 +504,18 @@ class FocusEngine:
             time_since_person_obs = current_time - self.last_person_observation
             person_mode_available = time_since_person_obs >= self.person_cooldown
 
+            # PRESENCE MEMORY: Check if we've already observed this person enough
+            observation_limit_reached = len(self.current_presence_observations) >= self.max_observations_per_presence
+
             if self.current_focus in ['PHILOSOPHICAL'] and time_in_focus < min_duration:
                 # Too deep in thought to interrupt yet
                 print(f"🧠 {self.current_focus} mode protected - person event noted but not interrupting ({time_in_focus:.0f}s < {min_duration}s)")
+            elif observation_limit_reached:
+                # Already observed this person enough - let them exist in peace
+                print(f"[PRESENCE] Already observed presence #{self.current_presence_id} {len(self.current_presence_observations)} times - skipping re-observation")
             elif person_mode_available and self.current_focus != "PERSON":
                 # Use PERSON mode for brief vision-grounded observation
-                print(f"👤 Person event → PERSON mode (brief grounding)")
+                print(f"[PERSON] Person event -> PERSON mode (brief grounding, obs {len(self.current_presence_observations)+1}/{self.max_observations_per_presence})")
                 return self._focus_person(state_analysis, "person_arrival")
             elif self.current_focus != "VISUAL" and not visual_in_cooldown:
                 # PERSON mode in cooldown - fall back to VISUAL
@@ -599,13 +612,22 @@ class FocusEngine:
         if person_events:
             # TRUE novelty: someone NEW arrived or EVERYONE left (now alone)
             if 'someone_arrived' in person_events:
+                # PRESENCE MEMORY: New arrival - reset observation tracking
+                self.current_presence_id += 1  # New visit
+                self.current_presence_observations = []  # Fresh observation slate
+                print(f"[PRESENCE] NEW PRESENCE #{self.current_presence_id} - observation memory reset")
                 return 1.0  # Someone NEW entered - maximum novelty
             if 'now_alone' in person_events:
+                # PRESENCE MEMORY: Everyone left - clear presence tracking
+                self.current_presence_observations = []
+                print(f"[PRESENCE] Everyone left - presence memory cleared")
                 return 1.0  # Everyone left - environment changed completely
 
             # MODERATE novelty: person count changed but people were already present
             # (e.g., 1 person -> 2 people, or 2 -> 1, but still not alone)
             if 'more_people' in person_events or 'fewer_people' in person_events:
+                # Count changed but continuous presence - don't reset observation memory
+                # This allows duck to acknowledge change without full rediscovery
                 return 0.6  # Worth noticing but not a complete reset
 
             # LOW novelty: Just movement/position shifts - don't override focus
@@ -838,12 +860,21 @@ class FocusEngine:
         - Always uses vision (llava)
         - Observes concrete details (clothing, position, activity)
         - Feeds details back into narrative thread via last_person_visual_detail
-        - 2-minute cooldown to prevent spam
+        - 30-second cooldown to prevent spam (was 120s - more responsive for exhibition)
+        - Presence memory: Max 3 observations per continuous presence
         """
         self._transition_focus("PERSON", reason)
 
         # Mark timestamp for cooldown
         self.last_person_observation = time.time()
+
+        # PRESENCE MEMORY: Record that we're making an observation
+        # This will be incremented when personality.py processes the observation
+        observation_timestamp = time.time()
+        self.current_presence_observations.append({
+            'timestamp': observation_timestamp,
+            'reason': reason
+        })
 
         context = {
             'mode': 'PERSON',
