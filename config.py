@@ -136,4 +136,4 @@ SUBTITLE_PROJECTOR_COLOR = "yellow"  # Color of projected subtitles
 
 # Background ambient audio (optional - set to None to disable)
 SUBTITLE_PROJECTOR_AUDIO = r"C:\Users\tobia\Desktop\drone.wav"  # Path to audio file
-SUBTITLE_PROJECTOR_AUDIO_VOLUME = 0.3  # Volume (0.0 = silent, 1.0 = max)
+SUBTITLE_PROJECTOR_AUDIO_VOLUME = 0.6  # Volume (0.0 = silent, 1.0 = max) - Increased to 60% for better audibility

@@ -63,12 +63,18 @@ class SubtitleProjector:
         self.root.bind('Q', lambda e: self.quit_projector())
         self.root.bind('<Control-q>', lambda e: self.quit_projector())
 
-        # Audio controls
+        # Audio controls (bind to multiple key variants)
         if self.audio_file:
             self.root.bind('a', self.toggle_audio)
             self.root.bind('A', self.toggle_audio)
+            # Volume controls - bind both +/= and - keys
             self.root.bind('+', lambda e: self.adjust_volume(0.1))
+            self.root.bind('=', lambda e: self.adjust_volume(0.1))  # + without shift
             self.root.bind('-', lambda e: self.adjust_volume(-0.1))
+            self.root.bind('_', lambda e: self.adjust_volume(-0.1))  # - with shift
+            # Arrow keys for volume (more intuitive)
+            self.root.bind('<Up>', lambda e: self.adjust_volume(0.1))
+            self.root.bind('<Down>', lambda e: self.adjust_volume(-0.1))
 
         # Create container frame for mirroring support
         self.container = tk.Frame(self.root, bg='black')
@@ -178,24 +184,42 @@ class SubtitleProjector:
     def _init_audio(self):
         """Initialize pygame mixer and load audio file"""
         try:
+            print(f"[AUDIO] Initializing audio system...")
+
             if not os.path.exists(self.audio_file):
-                print(f"[AUDIO] File not found: {self.audio_file}")
+                print(f"[AUDIO ERROR] File not found: {self.audio_file}")
                 return
 
+            print(f"[AUDIO] File exists: {self.audio_file}")
+
             # Initialize pygame mixer
+            print(f"[AUDIO] Initializing pygame mixer...")
             pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=512)
+
+            print(f"[AUDIO] Loading audio file...")
             pygame.mixer.music.load(self.audio_file)
+
+            print(f"[AUDIO] Setting volume to {self.audio_volume:.0%}...")
             pygame.mixer.music.set_volume(self.audio_volume)
 
             # Start playing on loop (-1 = infinite loop)
+            print(f"[AUDIO] Starting playback (infinite loop, 2s fade-in)...")
             pygame.mixer.music.play(loops=-1, fade_ms=2000)  # 2s fade-in
             self.audio_playing = True
 
-            print(f"[AUDIO] Playing: {os.path.basename(self.audio_file)} (volume: {self.audio_volume:.0%})")
-            print("[AUDIO] Controls: A=toggle audio, +/- = volume")
+            print(f"[AUDIO OK] Playing: {os.path.basename(self.audio_file)} (volume: {self.audio_volume:.0%})")
+            print("[AUDIO] Controls: A=toggle, Up/Down arrows=volume, +/-=volume")
+
+            # Check if it's actually playing
+            if pygame.mixer.music.get_busy():
+                print("[AUDIO] Playback confirmed active")
+            else:
+                print("[AUDIO WARNING] Playback started but mixer reports not busy")
 
         except Exception as e:
-            print(f"[AUDIO] Failed to initialize: {e}")
+            print(f"[AUDIO ERROR] Failed to initialize: {e}")
+            import traceback
+            traceback.print_exc()
             self.audio_playing = False
 
     def toggle_audio(self, event=None):

@@ -85,62 +85,10 @@ if SUBTITLE_PROJECTOR_ENABLED:
         print(f"[WARN] Subtitle projector not available: {e}")
         PROJECTOR_AVAILABLE = False
 
+# REMOVED: Thermal printer support deprecated - no longer needed
 def clear_print_queue_preemptive():
-    """Clear Windows print queue aggressively with admin elevation"""
-    try:
-        import subprocess
-        import os
-        import sys
-        print("[TRASH] Aggressively clearing Windows print spooler...")
-        
-        # Create a batch file to run as admin
-        batch_content = '''
-@echo off
-echo Stopping print spooler...
-net stop spooler
-echo Clearing spooler files...
-del /q "C:\\Windows\\System32\\spool\\PRINTERS\\*.*" 2>nul
-echo Starting print spooler...
-net start spooler
-echo Print spooler cleared successfully!
-'''
-        
-        # Write batch file
-        batch_path = os.path.join(os.getcwd(), "clear_spooler.bat")
-        with open(batch_path, 'w') as f:
-            f.write(batch_content)
-        
-        # Run batch file with admin privileges using runas
-        print("[LOCK] Running spooler clear with admin privileges...")
-        try:
-            # Method 1: Try to run with elevated privileges
-            result = subprocess.run([
-                'powershell', '-Command', 
-                f'Start-Process -FilePath "{batch_path}" -Verb RunAs -Wait -WindowStyle Hidden'
-            ], capture_output=True, timeout=15, text=True)
-            
-            if result.returncode == 0:
-                print("[OK] Print spooler cleared with admin privileges")
-            else:
-                raise Exception("Admin elevation failed")
-                
-        except Exception:
-            # Method 2: Fallback - try without elevation
-            print("[WARN] Admin elevation failed, trying without privileges...")
-            subprocess.run(['net', 'stop', 'spooler'], capture_output=True, shell=True)
-            subprocess.run(['net', 'start', 'spooler'], capture_output=True, shell=True)
-            print("[OK] Print spooler restarted (limited permissions)")
-        
-        # Clean up batch file
-        try:
-            os.remove(batch_path)
-        except:
-            pass
-            
-    except Exception as e:
-        print(f"[WARN] Could not clear print queue: {e}")
-        print("[LIGHT] Manual solution: Run as Administrator and execute:")
-        print("   net stop spooler && del /q C:\\Windows\\System32\\spool\\PRINTERS\\*.* && net start spooler")
+    """Deprecated - thermal printer no longer used"""
+    pass  # No-op function to avoid breaking initialization code
 
 class UrgentReactionQueue:
     """Thread-safe queue for urgent reactions (person arrivals/departures)"""
