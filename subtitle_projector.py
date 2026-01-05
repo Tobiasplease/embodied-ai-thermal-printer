@@ -387,12 +387,24 @@ class SubtitleProjectorClient:
             if start_fullscreen:
                 cmd.append('--fullscreen')
 
-            self.process = subprocess.Popen(
-                cmd,
-                startupinfo=startupinfo,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL
-            )
+            # Check if we should show debug output (useful for troubleshooting)
+            # Set environment variable DEBUG_PROJECTOR=1 to see output
+            show_debug = os.environ.get('DEBUG_PROJECTOR') == '1'
+
+            if show_debug:
+                # Show output for debugging
+                self.process = subprocess.Popen(
+                    cmd,
+                    startupinfo=startupinfo
+                )
+            else:
+                # Hide output for clean exhibition mode
+                self.process = subprocess.Popen(
+                    cmd,
+                    startupinfo=startupinfo,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL
+                )
             # Give it time to start
             time.sleep(1.5)
         except Exception as e:

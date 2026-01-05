@@ -220,13 +220,46 @@ class EmbodiedAI:
     def initialize(self):
         """Initialize all components"""
         try:
-            # FIRST: Pre-load vision model into VRAM for faster inference
+            # FIRST: Launch subtitle projector IMMEDIATELY for visual feedback
+            # This gives instant confirmation that the system is starting
+            if SUBTITLE_PROJECTOR_ENABLED and PROJECTOR_AVAILABLE:
+                print("[PROJECT] Launching subtitle projector (instant feedback)...")
+                try:
+                    # Check if running in exhibition mode (auto-fullscreen)
+                    import os
+                    exhibition_mode = os.environ.get('EXHIBITION_MODE') == '1'
+
+                    # Pass audio settings from config (set to None in config to disable)
+                    self.subtitle_projector = SubtitleProjectorClient(
+                        audio_file=SUBTITLE_PROJECTOR_AUDIO,
+                        audio_volume=SUBTITLE_PROJECTOR_AUDIO_VOLUME,
+                        start_fullscreen=exhibition_mode
+                    )
+                    print("[OK] Subtitle projector launched")
+
+                    # Give it a moment to appear, then update with loading status
+                    import time
+                    time.sleep(0.5)
+                    if hasattr(self, 'subtitle_projector') and self.subtitle_projector:
+                        self.subtitle_projector.display("Loading AI models...")
+
+                except Exception as e:
+                    print(f"[WARN] Subtitle projector disabled: {e}")
+                    self.subtitle_projector = None
+            else:
+                self.subtitle_projector = None
+
+            # SECOND: Pre-load vision model into VRAM (slow operation)
             if VOICE_ENABLED:  # Only print if we have output enabled
                 print("[AI] Pre-loading vision model into VRAM...")
             try:
                 import requests
                 from config import SINGLE_MODEL_MODE, SINGLE_MULTIMODAL_MODEL
                 if SINGLE_MODEL_MODE:
+                    # Show progress on projector
+                    if hasattr(self, 'subtitle_projector') and self.subtitle_projector:
+                        self.subtitle_projector.display(f"Loading {SINGLE_MULTIMODAL_MODEL}...")
+
                     # Warm up LLaVA and keep it in VRAM permanently (keep_alive=-1)
                     # This prevents 10+ second load times on each observation
                     requests.post(
@@ -239,10 +272,15 @@ class EmbodiedAI:
                         timeout=30
                     )
                     print(f"[OK] {SINGLE_MULTIMODAL_MODEL} locked in VRAM (4.4x faster)")
+
+                    # Update projector
+                    if hasattr(self, 'subtitle_projector') and self.subtitle_projector:
+                        self.subtitle_projector.display("Initializing personality...")
+
             except Exception as e:
                 print(f"[WARN] Could not pre-load model: {e}")
 
-            # SECOND: Clear any stuck print jobs before connecting printer
+            # THIRD: Clear any stuck print jobs before connecting printer
             clear_print_queue_preemptive()
 
             # State persistence now enabled - DO NOT delete personality_state.json
@@ -351,35 +389,19 @@ class EmbodiedAI:
                 else:
                     print("[MUTE] Voice system disabled (config)")
 
-            # Initialize subtitle projector (optional)
-            if SUBTITLE_PROJECTOR_ENABLED and PROJECTOR_AVAILABLE:
-                print("[PROJECT] Initializing subtitle projector...")
-                try:
-                    # Check if running in exhibition mode (auto-fullscreen)
+            # Subtitle projector already initialized at the start (moved to top for instant feedback)
+            # Show final ready message
+            if SUBTITLE_PROJECTOR_ENABLED and PROJECTOR_AVAILABLE and hasattr(self, 'subtitle_projector') and self.subtitle_projector:
+                if SUBTITLE_PROJECTOR_AUDIO:
                     import os
-                    exhibition_mode = os.environ.get('EXHIBITION_MODE') == '1'
-
-                    # Pass audio settings from config (set to None in config to disable)
-                    self.subtitle_projector = SubtitleProjectorClient(
-                        audio_file=SUBTITLE_PROJECTOR_AUDIO,
-                        audio_volume=SUBTITLE_PROJECTOR_AUDIO_VOLUME,
-                        start_fullscreen=exhibition_mode
-                    )
-                    print("[OK] Subtitle projector ready (fullscreen)")
-                    if SUBTITLE_PROJECTOR_AUDIO:
-                        import os
-                        if os.path.exists(SUBTITLE_PROJECTOR_AUDIO):
-                            print(f"[AUDIO] Background audio: {os.path.basename(SUBTITLE_PROJECTOR_AUDIO)} ({SUBTITLE_PROJECTOR_AUDIO_VOLUME:.0%})")
-                        else:
-                            print(f"[WARN] Audio file not found: {SUBTITLE_PROJECTOR_AUDIO}")
-                except Exception as e:
-                    print(f"[WARN] Subtitle projector disabled: {e}")
-                    self.subtitle_projector = None
-            else:
-                if SUBTITLE_PROJECTOR_ENABLED:
-                    print("[PROJECT] Subtitle projector disabled (not available)")
-                else:
-                    print("[PROJECT] Subtitle projector disabled (config)")
+                    if os.path.exists(SUBTITLE_PROJECTOR_AUDIO):
+                        print(f"[AUDIO] Background audio: {os.path.basename(SUBTITLE_PROJECTOR_AUDIO)} ({SUBTITLE_PROJECTOR_AUDIO_VOLUME:.0%})")
+                    else:
+                        print(f"[WARN] Audio file not found: {SUBTITLE_PROJECTOR_AUDIO}")
+            elif SUBTITLE_PROJECTOR_ENABLED and not PROJECTOR_AVAILABLE:
+                print("[PROJECT] Subtitle projector disabled (not available)")
+            elif not SUBTITLE_PROJECTOR_ENABLED:
+                print("[PROJECT] Subtitle projector disabled (config)")
 
             # Initialize hand control
             if DEBUG_MOTOR:
@@ -406,6 +428,10 @@ class EmbodiedAI:
         self.signals_armed = True
         self.running = True
         print("[STOP] Embodied AI v2 starting main loop...")
+
+        # Clear loading message and show ready state
+        if hasattr(self, 'subtitle_projector') and self.subtitle_projector:
+            self.subtitle_projector.clear()  # Clear "Loading..." message
 
         # Heartbeat tracking for crash detection
         self.last_heartbeat = time.time()
