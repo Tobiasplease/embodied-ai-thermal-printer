@@ -513,8 +513,9 @@ class EmbodiedAI:
                         self.personality.last_activity_result = activity_result
 
                     # GENERATE AND QUEUE URGENT REACTIONS based on ACTUAL EVENTS (not just high urgency)
-                    # Only generate when there's an actual arrival/departure/movement event
+                    # Include uncertainty reactions when person goes out of view
                     if presence_state and (presence_state.just_arrived or presence_state.just_left or
+                                          presence_state.detection_uncertain or
                                           (hasattr(presence_state, 'activity_changed') and presence_state.activity_changed)):
                         # Only queue reactions if enough time has passed (prevent spam)
                         time_since_last_reaction = current_time - self.last_urgent_reaction_time
@@ -628,6 +629,14 @@ class EmbodiedAI:
         try:
             if DEBUG_AI:
                 print(f"[AI] AI thread processing frame at {timestamp}")
+
+            # CHECK FOR URGENT REACTIONS FIRST - person arrivals take absolute priority
+            urgent = self.urgent_reaction_queue.get_if_urgent(threshold=0.5)  # Lower threshold for faster response
+            if urgent:
+                if DEBUG_AI:
+                    print(f"[URGENT] Person arrival - speaking immediate reaction (urgency {urgent['urgency']:.2f})")
+                self._speak_urgent_reaction(urgent['text'])
+                # Don't return - still generate proper observation after greeting
 
             # Pass person events to personality for instant captions
             if person_events:
@@ -1394,22 +1403,65 @@ class EmbodiedAI:
         return None
 
     def _generate_contextual_reaction(self, presence_state):
-        """Generate contextual reaction based on presence state - INSTANT FALLBACKS ONLY (skip LLM to avoid Ollama overload)"""
+        """Generate contextual reaction based on presence state - INSTANT FALLBACKS using YOLOv8 spatial data"""
         import random
 
-        # ARRIVAL reactions - use instant fallbacks to avoid concurrent llava calls
+        # ARRIVAL reactions - use rich spatial data from YOLOv8
         if presence_state.just_arrived:
             if presence_state.presence_duration < 1.0:
-                # Just arrived this moment - use simple interjections (no LLM call)
-                return random.choice(["Oh", "Hello there", "Hi", "Hm"])
+                # Just arrived - use spatial awareness for richer greetings
+                person_count = presence_state.person_count
+                spatial = presence_state.spatial_description
+
+                if person_count == 1:
+                    # Single person - vary by distance
+                    if spatial == "very close":
+                        return random.choice(["Oh, hello", "Someone very close", "Oh"])
+                    elif spatial in ["far away", "across the room"]:
+                        return random.choice(["Someone there", "Oh, across the room", "Someone far off"])
+                    elif spatial == "close":
+                        return random.choice(["Hello", "Oh, someone here", "Hi there"])
+                    else:  # nearby
+                        return random.choice(["Hello", "Oh", "Someone here"])
+
+                elif person_count == 2:
+                    return random.choice(["Oh, two people", "Hello both", "Two of you now", "Oh"])
+
+                elif person_count >= 3:
+                    if person_count >= 5:
+                        return random.choice([
+                            f"Oh, {person_count} people now",
+                            "Quite a crowd",
+                            "Many people here",
+                            "Oh"
+                        ])
+                    else:
+                        return random.choice([f"Oh, {person_count} people", f"{person_count} of you now", "Oh"])
             else:
                 # Already acknowledged - don't repeat
                 return None
 
-        # DEPARTURE reactions - disabled to avoid concurrent llava calls
+        # UNCERTAINTY reactions - lost visual but still in grace period
+        elif presence_state.detection_uncertain:
+            # Can't see them anymore but might still be there
+            # Express curiosity/seeking rather than declaring them gone
+            return random.choice([
+                "Hello?",
+                "Still there?",
+                "Where'd you go?",
+                "Hm?",
+                None  # Sometimes silent uncertainty
+            ])
+
+        # DEPARTURE reactions - acknowledge absence (AFTER grace period expires)
         elif presence_state.just_left:
-            # Skip LLM call - return None (no reaction needed for departures)
-            return None
+            person_count = presence_state.person_count
+            if person_count == 0:
+                # Everyone left - acknowledge solitude
+                return random.choice(["Alone again", "Gone", None])  # None = let next observation handle it
+            else:
+                # Some left, some remain
+                return None  # Let LLM observation handle the nuance
 
         # MOVEMENT reactions - disabled to avoid concurrent llava calls
         elif presence_state.activity_description in ["moving", "moving around"]:

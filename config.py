@@ -119,7 +119,7 @@ LIPSYNC_BAUD = 9600  # Serial baud rate
 
 # Lightbulb Settings (synchronized with TTS audio/jaw movement)
 LIGHTBULB_ENABLED = True  # Enable lightbulb that fluctuates with speech
-LIGHTBULB_PORT = "COM21"  # Separate Arduino for lightbulb control
+LIGHTBULB_PORT = "COM22"  # Separate Arduino for lightbulb control
 LIGHTBULB_BAUD = 9600  # Serial baud rate
 
 # Camera Preview Settings
@@ -136,4 +136,4 @@ SUBTITLE_PROJECTOR_COLOR = "yellow"  # Color of projected subtitles
 
 # Background ambient audio (optional - set to None to disable)
 SUBTITLE_PROJECTOR_AUDIO = r"C:\Users\tobia\Desktop\drone.wav"  # Path to audio file
-SUBTITLE_PROJECTOR_AUDIO_VOLUME = 0.6  # Volume (0.0 = silent, 1.0 = max) - Increased to 60% for better audibility
+SUBTITLE_PROJECTOR_AUDIO_VOLUME = 0.8  # Volume (0.0 = silent, 1.0 = max) - Gallery exhibition ambient presence

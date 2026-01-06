@@ -115,7 +115,7 @@ class PersonTracker:
 
         # Detection persistence (prevents flicker-driven arrivals/departures)
         self.presence_confirmation_time = 0.6   # Seconds of consistent detection before confirming presence
-        self.absence_grace_time = 8.0           # Seconds to wait before declaring everyone gone (debounce for lighting/occlusion)
+        self.absence_grace_time = 12.0          # Seconds to wait before declaring everyone gone (allows time for "are you still there?" moments)
         self.pending_positive_count = 0
         self.pending_positive_start = None
         self.last_positive_detection_time = 0.0

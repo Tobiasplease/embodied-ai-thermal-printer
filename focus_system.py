@@ -507,10 +507,7 @@ class FocusEngine:
             # PRESENCE MEMORY: Check if we've already observed this person enough
             observation_limit_reached = len(self.current_presence_observations) >= self.max_observations_per_presence
 
-            if self.current_focus in ['PHILOSOPHICAL'] and time_in_focus < min_duration:
-                # Too deep in thought to interrupt yet
-                print(f"🧠 {self.current_focus} mode protected - person event noted but not interrupting ({time_in_focus:.0f}s < {min_duration}s)")
-            elif observation_limit_reached:
+            if observation_limit_reached:
                 # Already observed this person enough - let them exist in peace
                 print(f"[PRESENCE] Already observed presence #{self.current_presence_id} {len(self.current_presence_observations)} times - skipping re-observation")
             elif person_mode_available and self.current_focus != "PERSON":

@@ -50,9 +50,9 @@ class SubtitleProjector:
         self.audio_volume = audio_volume
         self.audio_playing = False
 
-        # Initialize audio if file provided and pygame available
+        # Delay audio initialization until after window is ready
         if audio_file and PYGAME_AVAILABLE:
-            self._init_audio()
+            self.root.after(500, self._init_audio)
 
         # Keyboard controls - properly toggle fullscreen
         self.root.bind('<Escape>', self.exit_fullscreen_or_quit)
@@ -183,43 +183,62 @@ class SubtitleProjector:
 
     def _init_audio(self):
         """Initialize pygame mixer and load audio file"""
+        # Write to log file for debugging (since subprocess stdout may be hidden)
+        log_file = os.path.join(os.path.dirname(__file__), "audio_debug.log")
+
+        def log(msg):
+            print(msg)
+            try:
+                with open(log_file, 'a', encoding='utf-8') as f:
+                    from datetime import datetime
+                    timestamp = datetime.now().strftime("%H:%M:%S")
+                    f.write(f"[{timestamp}] {msg}\n")
+                    f.flush()
+            except:
+                pass
+
         try:
-            print(f"[AUDIO] Initializing audio system...")
+            log("[AUDIO] === Initializing audio system ===")
+            log(f"[AUDIO] PYGAME_AVAILABLE = {PYGAME_AVAILABLE}")
+            log(f"[AUDIO] audio_file = {self.audio_file}")
+            log(f"[AUDIO] audio_volume = {self.audio_volume}")
 
             if not os.path.exists(self.audio_file):
-                print(f"[AUDIO ERROR] File not found: {self.audio_file}")
+                log(f"[AUDIO ERROR] File not found: {self.audio_file}")
                 return
 
-            print(f"[AUDIO] File exists: {self.audio_file}")
+            log(f"[AUDIO] File exists (size: {os.path.getsize(self.audio_file)} bytes)")
 
             # Initialize pygame mixer
-            print(f"[AUDIO] Initializing pygame mixer...")
+            log(f"[AUDIO] Initializing pygame mixer...")
             pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=512)
+            log(f"[AUDIO] Mixer initialized: {pygame.mixer.get_init()}")
 
-            print(f"[AUDIO] Loading audio file...")
+            log(f"[AUDIO] Loading audio file...")
             pygame.mixer.music.load(self.audio_file)
+            log(f"[AUDIO] Audio file loaded successfully")
 
-            print(f"[AUDIO] Setting volume to {self.audio_volume:.0%}...")
+            log(f"[AUDIO] Setting volume to {self.audio_volume:.0%}...")
             pygame.mixer.music.set_volume(self.audio_volume)
 
             # Start playing on loop (-1 = infinite loop)
-            print(f"[AUDIO] Starting playback (infinite loop, 2s fade-in)...")
+            log(f"[AUDIO] Starting playback (infinite loop, 2s fade-in)...")
             pygame.mixer.music.play(loops=-1, fade_ms=2000)  # 2s fade-in
             self.audio_playing = True
 
-            print(f"[AUDIO OK] Playing: {os.path.basename(self.audio_file)} (volume: {self.audio_volume:.0%})")
-            print("[AUDIO] Controls: A=toggle, Up/Down arrows=volume, +/-=volume")
+            log(f"[AUDIO OK] Playing: {os.path.basename(self.audio_file)} (volume: {self.audio_volume:.0%})")
+            log("[AUDIO] Controls: A=toggle, Up/Down arrows=volume, +/-=volume")
 
             # Check if it's actually playing
             if pygame.mixer.music.get_busy():
-                print("[AUDIO] Playback confirmed active")
+                log("[AUDIO] Playback confirmed ACTIVE")
             else:
-                print("[AUDIO WARNING] Playback started but mixer reports not busy")
+                log("[AUDIO WARNING] Playback started but mixer reports NOT BUSY")
 
         except Exception as e:
-            print(f"[AUDIO ERROR] Failed to initialize: {e}")
+            log(f"[AUDIO ERROR] Failed to initialize: {e}")
             import traceback
-            traceback.print_exc()
+            log(traceback.format_exc())
             self.audio_playing = False
 
     def toggle_audio(self, event=None):
@@ -367,17 +386,19 @@ class SubtitleProjectorClient:
 
         # Launch projector as subprocess WITHOUT console window
         try:
-            # Use pythonw.exe on Windows to hide console
+            # Use regular python.exe (keep using venv if active)
             python_exe = sys.executable
-            if sys.platform == 'win32':
-                python_exe = python_exe.replace('python.exe', 'pythonw.exe')
 
-            # Launch subprocess with hidden console
+            # Launch subprocess with hidden console (works better than pythonw.exe)
             startupinfo = None
+            creationflags = 0
+
             if sys.platform == 'win32':
                 startupinfo = subprocess.STARTUPINFO()
                 startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
                 startupinfo.wShowWindow = subprocess.SW_HIDE
+                # Use CREATE_NO_WINDOW flag (more reliable than pythonw.exe)
+                creationflags = subprocess.CREATE_NO_WINDOW
 
             # Build command with audio parameters
             cmd = [python_exe, __file__, '--server', str(port)]
@@ -392,18 +413,19 @@ class SubtitleProjectorClient:
             show_debug = os.environ.get('DEBUG_PROJECTOR') == '1'
 
             if show_debug:
-                # Show output for debugging
+                # Show output for debugging (no CREATE_NO_WINDOW so console appears)
                 self.process = subprocess.Popen(
                     cmd,
                     startupinfo=startupinfo
                 )
             else:
-                # Hide output for clean exhibition mode
+                # Hide output AND console for clean exhibition mode
                 self.process = subprocess.Popen(
                     cmd,
                     startupinfo=startupinfo,
                     stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL
+                    stderr=subprocess.DEVNULL,
+                    creationflags=creationflags
                 )
             # Give it time to start
             time.sleep(1.5)
@@ -460,6 +482,21 @@ if __name__ == "__main__":
         parser.add_argument('--volume', type=float, default=0.3, help='Audio volume (0.0-1.0)')
         parser.add_argument('--fullscreen', action='store_true', help='Start in fullscreen mode')
         args = parser.parse_args()
+
+        # Log startup info to file for debugging
+        log_file = os.path.join(os.path.dirname(__file__), "projector_startup.log")
+        try:
+            with open(log_file, 'w', encoding='utf-8') as f:
+                from datetime import datetime
+                f.write(f"=== Subtitle Projector Startup {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} ===\n")
+                f.write(f"Port: {args.port}\n")
+                f.write(f"Audio file: {args.audio}\n")
+                f.write(f"Audio volume: {args.volume}\n")
+                f.write(f"Fullscreen: {args.fullscreen}\n")
+                f.write(f"sys.executable: {sys.executable}\n")
+                f.write(f"PYGAME_AVAILABLE: {PYGAME_AVAILABLE}\n")
+        except Exception as e:
+            pass
 
         print(f"Starting Subtitle Projector window (port {args.port})...")
         if args.fullscreen:

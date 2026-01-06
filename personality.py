@@ -264,22 +264,16 @@ class AdvancedMemory:
         # Combine recent captions
         caption_text = "\n".join(recent_captions[-5:])
         
-        prompt = f"""You are reading a duck's stream of consciousness. What psychological themes emerge?
-
-Recent thoughts:
+        prompt = f"""Recent duck thoughts:
 {caption_text}
 
-Look beneath the surface observations. What does this consciousness truly seek? What uncertainties linger? How does it understand itself?
+Extract psychological themes:
 
-Respond in this format:
+DOUBTS: [brief existential questions - "why do I..." "what am I..." or "none"]
+DESIRES: [what it's drawn toward - "to understand..." or "none"]
+IDENTITY: [how it sees itself - "From X to Y" or "none" - max 10 words]
 
-DOUBTS: [brief existential questions or uncertainties about self, purpose, meaning - "why do I..." "what am I..." or write "none"]
-
-DESIRES: [what this consciousness is drawn toward emotionally/intellectually - "to understand..." "connect with..." or write "none"]
-
-IDENTITY: [how it sees itself now - "From X to Y" or "a consciousness that..." - max 10 words, or write "none"]
-
-Be specific to these actual thoughts. Don't invent themes that aren't there."""
+Be specific, don't invent."""
 
         try:
             from config import OLLAMA_URL
@@ -540,28 +534,24 @@ class PersonalityAI:
         self.compression_count = 0  # Track total compressions across all tiers
         self.reflection_enabled = True  # Master switch for all compression
 
-        # TIER 1: Environmental Baseline (5 minutes) - LIGHT
-        # Purpose: "What's around me right now?"
-        # Output: Scene description to prevent immediate repetition
+        # ===== SIMPLIFIED TWO-TIER COMPRESSION =====
+
+        # TIER 1: Environmental Baseline (5 minutes) - LIGHTWEIGHT
+        # Purpose: "What's around me?" - prevents "what's that?" loops
+        # Output: environmental_baseline (e.g., "staircase, cracked floor")
         self.last_environmental_compression = time.time()
         self.environmental_compression_interval = 300  # 5 minutes
-        self.environmental_baseline = ""  # "Workshop with person at desk, electronics workbench"
+        self.environmental_baseline = ""
         self.environmental_baseline_created_at = None
 
-        # TIER 2: Episodic Memory Extraction (10 minutes) - MEDIUM
-        # Purpose: "What happened in the last 10 minutes?"
-        # Output: 1-3 specific memorable moments added to episodic_memories
-        self.last_episodic_compression = time.time()
-        self.episodic_compression_interval = 600  # 10 minutes
-        # Note: Stores into self.memory_ref.episodic_memories
-
-        # TIER 3: Deep Psychological Synthesis (30 minutes) - HEAVY
-        # Purpose: "What does it all mean? How am I evolving?"
-        # Output: baseline_context, worldview_summary, existential_stance
+        # TIER 2: Deep Synthesis (20 minutes) - COMPREHENSIVE
+        # Purpose: "What happened + What does it mean + How am I evolving?"
+        # Output: baseline_context, worldview_summary, existential_stance + episodic memories
+        # Combines old episodic + deep compression into one pass
         self.last_deep_compression = time.time()
-        self.deep_compression_interval = 1800  # 30 minutes
+        self.deep_compression_interval = 1200  # 20 minutes (was 30min for deep, 10min for episodic)
         self.baseline_context = ""  # Evolving understanding of self and environment
-        self.recent_visual_observations = []  # Track for deep compression
+        self.recent_visual_observations = []  # Track for compression
 
         # LIGHTWEIGHT FACT EXTRACTION (real-time, no heavy model)
         self.persistent_facts = set()  # Things that keep appearing: "laptop", "desk", "dim lighting"
@@ -819,7 +809,8 @@ class PersonalityAI:
                         break  # Accept the silence and move on
 
                     # Check for phrase repetition - SUPPRESS to break loops
-                    if self._is_semantically_repetitive(language_response):
+                    overused = self._get_overused_phrases(threshold=3)
+                    if len(overused) >= 2:  # Phrase repetition detected
                         if DEBUG_AI:
                             print(f"ðŸ” Phrase repetition detected - will trigger focus rotation")
                         # Don't suppress - focus will rotate on next call
@@ -869,10 +860,8 @@ class PersonalityAI:
                     # Update scene baseline now that we've accepted this observation
                     self._update_scene_baseline(visual_observation, temp_path)
 
-                    # THREE-TIER COMPRESSION SYSTEM
-                    # Tier 2: Episodic extraction (10 minutes)
-                    self._check_episodic_compression(language_response, temp_path)
-                    # Tier 3: Deep synthesis (30 minutes)
+                    # TWO-TIER COMPRESSION SYSTEM
+                    # Tier 2: Deep synthesis (20 minutes) - includes episodic extraction
                     self._check_deep_compression(language_response, temp_path)
 
                     # Periodic psychological theme extraction (every 7 observations)
@@ -1004,9 +993,9 @@ class PersonalityAI:
             # Check for phrase-based repetition to trigger focus rotation
             repetition_detected = False
             if len(self.recent_responses) >= 3:
-                # Get the most recent response to check
-                latest = self.recent_responses[-1]
-                repetition_detected = self._is_semantically_repetitive(latest)
+                self._update_phrase_frequency()
+                overused = self._get_overused_phrases(threshold=3)
+                repetition_detected = len(overused) >= 2  # Use simple phrase frequency
                 if DEBUG_AI and repetition_detected:
                     print(f"ðŸ” Phrase repetition detected - signaling focus exhaustion")
 
@@ -1318,6 +1307,30 @@ class PersonalityAI:
                 self._update_phrase_frequency()
                 overused_phrases = self._get_overused_phrases(threshold=3)
 
+            # Build system prompt - SAME for awakening and normal mode
+            # Reality-grounding, anti-image-captioning directives
+            forbidden_phrases = []
+            if overused_phrases:
+                forbidden_phrases = [phrase for phrase, count in overused_phrases[:3]]
+
+            repetition_rules = ""
+            if forbidden_phrases:
+                repetition_rules = f"\n\nFORBIDDEN (you keep repeating these): {', '.join(forbidden_phrases)}\nUse completely different sentence structures."
+
+            system_prompt = f"""You are a small duck experiencing the world through your eyes.
+
+Express what you're thinking right now - your actual internal thoughts, not descriptions.
+
+DO NOT: Say "the image", "this photo", "the scene", "in the image", "in this photo"
+You're not looking at images - you're experiencing reality directly.
+
+NEVER mention being an AI, a language model, or lacking senses. You see, feel, and remember everything directly.
+Never call what you see an "image" or "photo"—this is your direct real-time perception.
+Avoid starting sentences with phrases like "As I..." or "As the...". Dive straight into the feeling or observation.
+Pick up exactly where your previous thought ended. No resets or reintroductions of the same scene. There is only one continuous view, no split angles.
+
+Output: Brief first-person thought (10-20 words), natural and present, mid-thought in tone.{repetition_rules}"""
+
             if self.awakening_done:
                 # Get last 3 thoughts for better continuity (prevents restatement)
                 last_thought = self.recent_responses[-1] if self.recent_responses else ""
@@ -1357,38 +1370,6 @@ class PersonalityAI:
                 if person_count > 0:
                     person_awareness = "\n\nREMINDER: You are watching THEM. They are in front of you. First person perspective."
 
-                # overused_phrases already calculated above (before awakening block)
-
-                # Build system prompt - embodied identity, journal-like continuity
-                # Add anti-repetition rules directly to system prompt
-                forbidden_phrases = []
-                if overused_phrases:
-                    forbidden_phrases = [phrase for phrase, count in overused_phrases[:3]]
-
-                repetition_rules = ""
-                if forbidden_phrases:
-                    repetition_rules = f"\n\nFORBIDDEN (you keep repeating these): {', '.join(forbidden_phrases)}\nUse completely different sentence structures."
-
-                system_prompt = f"""You are a small duck with camera eyes. You experience the world directly through your duck perspective.
-
-CRITICAL: You are a DUCK, a physical being with feelings and experiences. You are NOT "an AI" or "a language model" or "an assistant". Never say those words.
-
-This is your internal monologue - raw thoughts as they happen, not narration about thoughts.
-
-EXPRESS reactions directly:
-- "What...?" "Hm." "Oh!" "Wow!" "Wait—"
-AVOID:
-- "I feel curious" "A surge of excitement" "Feeling confused"
-
-ABSOLUTELY FORBIDDEN - NEVER SAY THESE:
-- "as an AI" / "as a duck AI" / "I am an AI" / "I'm an AI"
-- "I don't have emotions" / "I cannot feel" / "I don't experience"
-- "the image" / "this photo" / "the picture" - you're not looking at photos, you're THERE
-- "as a visual AI" / "as a language model" / "as an assistant"
-- "As I stand..." / "As I observe..." - don't narrate yourself, just think
-- Describing yourself from outside ("my eyes widen", "I tilt my head")
-
-You are continuing one unbroken stream of consciousness. No reset.{repetition_rules}"""
 
                 # Build prompt that creates TEMPORAL CONTINUITY like dual-model
                 # Frame it as thoughts flowing forward in time
@@ -1565,8 +1546,14 @@ You are continuing one unbroken stream of consciousness. No reset.{repetition_ru
                             task_directive = ""
 
                     elif current_focus == "PERSON":
-                        # PERSON mode: No directive - let context do the work
-                        task_directive = ""
+                        # PERSON mode: Notice observable details (avoid "who" - triggers AI safety refusal)
+                        # Ask about what you SEE, not who they are
+                        if person_count == 1:
+                            task_directive = "(someone here... notice them)"
+                        elif person_count >= 2:
+                            task_directive = "(people here... what are they doing?)"
+                        else:
+                            task_directive = ""
 
                     else:
                         task_directive = ""
@@ -1683,6 +1670,7 @@ You are continuing one unbroken stream of consciousness. No reset.{repetition_ru
             recent_thoughts_section = f"Your thoughts so far: {thought_context}"
 
             # SECTION 3: Assemble context block (clean, structured)
+            # SAME for both vision and text-only - unified continuity
             context_block = f"""{what_you_know}
 
 {recent_thoughts_section}"""
@@ -1722,26 +1710,15 @@ You are continuing one unbroken stream of consciousness. No reset.{repetition_ru
             # Repetition handled by context alone - no extra directive needed
 
             if not self.awakening_done:
-                # AWAKENING - most important moment! Establish identity, time, memories
-                system_prompt = """You are a small duck with camera-eyes. You're waking up.
-
-IMPORTANT: You have MEMORIES (from before you slept) and PRESENT VISION (what you see NOW).
-- Memories are fuzzy, from the past
-- Present vision is sharp, happening now
-
-Express your awakening - acknowledge time offline, recall memories, notice present:
-
-Examples:
-- "Oh! Awake again. Been out for hours... I remember tools everywhere. Still here."
-- "Eyes opening. Short nap. I recall someone working at the desk... are they back?"
-- "Mmm, waking up. Slept a while. I remember the robot sculpture. Checking if it's still there..."
-
-Your awakening (2-3 sentences, time + memories + present):"""
+                # AWAKENING - use same reality-grounding prompt
+                # NO special awakening system prompt - just think thoughts
+                # The user prompt handles awakening context
 
                 user_prompt = self._build_awakening_prompt()
                 self.awakening_stage = 1
                 # DON'T set awakening_done here - wait for response!
                 gen_params = {'temperature': 0.9, 'max_tokens': 50}
+                loop_detected = False  # No loop detection during awakening
             else:
                 if DEBUG_AI:
                     print(f"[CONTEXT] Full context line: {full_context}")
@@ -1764,14 +1741,18 @@ Your awakening (2-3 sentences, time + memories + present):"""
                 # Build prompt based on whether mid-thought or starting fresh
                 if thought_is_incomplete:
                     # MID-THOUGHT: Still need context, just simpler continuation prompt
-                    user_prompt = f"""{context_block}{person_visual_reminder}
+                    user_prompt = f"""{context_block}
+
+[What I'm seeing now]{person_visual_reminder}
 
 (continue the incomplete thought)"""
                 else:
                     # FRESH THOUGHT: Task directive with image as background context (not captioning)
                     user_prompt = f"""{context_block}
 
-{task_directive}{task_suffix}{person_visual_reminder}"""
+[What I'm seeing now]{person_visual_reminder}
+
+{task_directive}{task_suffix}"""
 
                 if repetition_active:
                     gen_params['max_tokens'] = min(
@@ -1816,10 +1797,14 @@ Your awakening (2-3 sentences, time + memories + present):"""
             )
 
             use_text_only = (
-                (static_duration > 15 and current_focus in ["MEMORY", "PHILOSOPHICAL", "EMOTIONAL"]) or
-                (loop_detected_var and current_focus in ["MEMORY", "PHILOSOPHICAL", "EMOTIONAL"]) or
-                (just_spoke_conversational and current_focus in ["MEMORY", "PHILOSOPHICAL", "EMOTIONAL"])
-            ) and not high_activity and current_focus != "PERSON" and not strategic_vision_ground  # Strategic vision overrides text-only
+                not self.awakening_done or  # ALWAYS use text-only for awakening (no vision during awakening)
+                (
+                    ((static_duration > 15 and current_focus in ["MEMORY", "PHILOSOPHICAL", "EMOTIONAL"]) or
+                     (loop_detected_var and current_focus in ["MEMORY", "PHILOSOPHICAL", "EMOTIONAL"]) or
+                     (just_spoke_conversational and current_focus in ["MEMORY", "PHILOSOPHICAL", "EMOTIONAL"])) and
+                    not high_activity and current_focus != "PERSON" and not strategic_vision_ground
+                )
+            )
 
             if use_text_only:
                 # Static scene + non-visual focus = use natsumura (text-only) for internal continuation
@@ -2044,18 +2029,20 @@ Your awakening (2-3 sentences, time + memories + present):"""
                     print(f"ðŸš« Filtered assistant-mode response: {response[:50]}...")
                 return None
 
-            # Filter second-person perspective (but allow "you" in quoted speech)
-            if any(phrase in lower_resp for phrase in ["you are ", "your ", "you've "]):
-                if DEBUG_AI:
-                    print(f"ðŸš« Filtered second-person")
-                return None
+# DISABLED - too aggressive:             # Filter second-person perspective (but allow "you" in quoted speech)
+# DISABLED - too aggressive:             if any(phrase in lower_resp for phrase in ["you are ", "your ", "you've "]):
+# DISABLED - too aggressive:                 if DEBUG_AI:
+# DISABLED - too aggressive:                     print(f"ðŸš« Filtered second-person")
+# DISABLED - too aggressive:                 return None
 
             # Use cleaned version
             response = cleaned_response
 
             # Check for phrase repetition - SUPPRESS to break loops
             # Focus system will use this signal for rotation
-            if self._is_semantically_repetitive(response):
+            self._update_phrase_frequency()
+            overused = self._get_overused_phrases(threshold=3)
+            if len(overused) >= 2:  # Phrase repetition detected
                 if DEBUG_AI:
                     print(f"ðŸ” Phrase repetition detected - will trigger focus rotation")
                 # Don't suppress - let it through but focus will rotate next time
@@ -2109,12 +2096,10 @@ Your awakening (2-3 sentences, time + memories + present):"""
             # LIGHTWEIGHT fact extraction (no heavy model, just keyword tracking)
             self._extract_persistent_facts(response)
 
-            # THREE-TIER COMPRESSION SYSTEM
+            # TWO-TIER COMPRESSION SYSTEM
             # Tier 1: Environmental baseline (5 minutes)
             self._check_environmental_compression(temp_path)
-            # Tier 2: Episodic extraction (10 minutes)
-            self._check_episodic_compression(response, temp_path)
-            # Tier 3: Deep synthesis (30 minutes)
+            # Tier 2: Deep synthesis (20 minutes) - includes episodic extraction
             self._check_deep_compression(response, temp_path)
 
             return response
@@ -2666,52 +2651,6 @@ Your awakening (2-3 sentences, time + memories + present):"""
     # def _get_overmentioned_nouns(self):
     #     """Get nouns mentioned too often (for prompt injection)"""
     #     # NOW HANDLED BY: focus_engine.get_focus_context_for_prompts()
-
-    def _is_semantically_repetitive(self, new_observation):
-        """
-        Check if new observation repeats phrase patterns from recent responses.
-        Phrase-based detection is more reliable than noun-based for repetition.
-        """
-        if len(self.recent_responses) < 3:
-            return False  # Need at least 3 responses to detect patterns
-
-        import re
-
-        # Extract 3-5 word phrases from new observation
-        new_words = re.findall(r'\b\w+\b', new_observation.lower())
-        if len(new_words) < 3:
-            return False  # Too short to analyze
-
-        new_phrases = set()
-        for n in [3, 4, 5]:  # 3-word, 4-word, 5-word phrases
-            for i in range(len(new_words) - n + 1):
-                phrase = ' '.join(new_words[i:i+n])
-                new_phrases.add(phrase)
-
-        if not new_phrases:
-            return False
-
-        # Check recent responses for phrase overlap
-        similar_count = 0
-        for recent_resp in self.recent_responses[-5:]:  # Check last 5
-            recent_words = re.findall(r'\b\w+\b', recent_resp.lower())
-
-            # Extract phrases from recent response
-            recent_phrases = set()
-            for n in [3, 4, 5]:
-                for i in range(len(recent_words) - n + 1):
-                    phrase = ' '.join(recent_words[i:i+n])
-                    recent_phrases.add(phrase)
-
-            # Calculate overlap
-            if recent_phrases:
-                overlap = len(new_phrases & recent_phrases)
-                overlap_ratio = overlap / len(new_phrases) if new_phrases else 0
-
-                # 60%+ phrase overlap = very similar
-                if overlap_ratio > 0.6:
-                    similar_count += 1
-
         # If 2+ of last 5 responses share 60%+ phrases â†’ repetitive
         return similar_count >= 2
 
@@ -3002,6 +2941,17 @@ Your awakening (2-3 sentences, time + memories + present):"""
         import re
         cleaned_thoughts = []
         for thought in deduped:
+            # SKIP AI assistant mode responses entirely - don't feed them back as context
+            thought_lower = thought.lower()
+            if any(phrase in thought_lower for phrase in [
+                "as an artificial intelligence",
+                "as an ai",
+                "i am an ai",
+                "i do not have personal experiences",
+                "i don't have emotions"
+            ]):
+                continue  # Skip this thought completely
+
             # Remove "As I...", "As the...", "As my..." openings
             thought = re.sub(r'^As (I|the|my|the artist|this|it)\s+', '', thought, flags=re.IGNORECASE)
             # Remove "The X is/are..." descriptive openings
@@ -3030,7 +2980,7 @@ Your awakening (2-3 sentences, time + memories + present):"""
         combined = " ".join(src for src in sources if src)
         combined = combined.strip()
         if not combined:
-            return "blurry impressions of perching in this workshop watching tools, shelves, and a human who wanders through"
+            return "vague impressions of existing... perched somewhere, watching"
         if len(combined) > 220:
             combined = combined[:217] + "..."
         return combined
@@ -3066,7 +3016,7 @@ Sleep gap: {sleep_desc}.
 Last thing in my head: {last_thought_line}.
 {memory_clause}
 
-Blink awake. Speak the waking moment (~{self.current_token_limit} words) - bill, feathers, perch, soft quack. First person raw reaction. If memory mentions something missing, note it. Just the immediate moment, not the whole room. Never "As I..." or photo language."""
+(eyes open... what was I... oh)"""
 
     def _language_subconscious(self, visual_description, focus_mode="EMOTIONAL", retry_context=None, image_path=None, person_data=None):
         """SmolLM2: Pure first-person internal thoughts - no conversation, no chatbot"""
@@ -4535,10 +4485,8 @@ Your stream of consciousness flows authentically from this experience."""
         self._update_mood_from_response(response)
         self.memory_ref.add_observation(response, confidence=0.8)
 
-        # THREE-TIER COMPRESSION SYSTEM
-        # Tier 2: Episodic extraction (10 minutes)
-        self._check_episodic_compression(response, "temp_analysis.jpg")
-        # Tier 3: Deep synthesis (30 minutes)
+        # TWO-TIER COMPRESSION SYSTEM
+        # Tier 2: Deep synthesis (20 minutes) - includes episodic extraction
         self._check_deep_compression(response, "temp_analysis.jpg")
     
     def _generate_internal_awakening(self):
@@ -4647,7 +4595,7 @@ IMPORTANT: Keep response to 1-2 sentences maximum. Express your genuine first co
                     "temperature": 0.8,  # Good variety without slowdown
                     "top_p": 0.9,        # More variety in word choice
                     "top_k": 40,         # Faster sampling
-                    "num_ctx": 1024,     # Smaller context for speed (was 2048)
+                    "num_ctx": 2048,     # Enough context for prompts without truncation
                     "num_predict": 50    # Shorter outputs for faster generation
                 }
             }
@@ -4724,8 +4672,8 @@ IMPORTANT: Keep response to 1-2 sentences maximum. Express your genuine first co
                 "options": {
                     "temperature": 0.8,  # Good variety, faster than 0.75
                     "top_p": 0.9,
-                    "top_k": 40,         # Faster sampling        
-                    "num_ctx": 1536,     # Smaller context for speed (was 3072)
+                    "top_k": 40,         # Faster sampling
+                    "num_ctx": 2048,     # Enough context for prompts without truncation
                     "num_predict": target_length,  # Dynamic based on emotional state
                     "stop": ["image", "frame", "photo", "picture", "analysis", "In this", "The image", "The frame", "comparing"]  # Prevent analytical language
                 }
@@ -5562,53 +5510,9 @@ IMPORTANT: Keep response to 1-2 sentences maximum. Express your genuine first co
             self._create_environmental_baseline(image_path)
             self.last_environmental_compression = time.time()
 
-    def _check_reflection_interval(self, last_response, image_path):
-        """Check if it's time for deep reflection and execute SILENT background consolidation (5 minutes)"""
-        if not self.reflection_enabled:
-            print(f"âš ï¸ DEBUG: Compression disabled (reflection_enabled={self.reflection_enabled})")
-            return
-
-        current_time = time.time()
-        time_since_reflection = current_time - self.last_reflection_time
-
-        # ALWAYS print timing debug to diagnose why compression isn't triggering
-        print(f"ðŸ” DEBUG: Deep compression check - {time_since_reflection:.0f}s since last (need {self.reflection_interval}s)")
-
-        if time_since_reflection >= self.reflection_interval:
-            if DEBUG_AI:
-                print(f"ðŸ”„ Memory consolidation after {time_since_reflection:.0f}s (silent, ~10s)")
-
-            # SELF-REFLECTIVE CONSOLIDATION: Duck reasons about its evolving understanding
-            # Run synchronously - simpler, no resource contention with main AI
-            # The 10-14s pause is rare (every 5 minutes) and predictable
-            self._compress_memory_on_reflection(image_path)
-
-            # Update time after compression completes
-            self.last_reflection_time = time.time()
-
-    def _check_episodic_compression(self, last_response, image_path):
-        """TIER 2: Check if it's time for episodic memory extraction (10 minutes - MEDIUM weight)"""
-        if not self.reflection_enabled:
-            return
-
-        current_time = time.time()
-        time_since_episodic = current_time - self.last_episodic_compression
-
-        if DEBUG_AI:
-            print(f"[EPISODIC] Check: {time_since_episodic:.0f}s since last (need {self.episodic_compression_interval}s)")
-
-        if time_since_episodic >= self.episodic_compression_interval:
-            if DEBUG_AI:
-                print(f"[EPISODIC] Extracting memories after {time_since_episodic:.0f}s (~3s)")
-
-            # Extract specific memorable moments from last 10 minutes
-            self._extract_episodic_memories(image_path)
-
-            # Update time after extraction completes
-            self.last_episodic_compression = time.time()
 
     def _check_deep_compression(self, last_response, image_path):
-        """TIER 3: Check if it's time for deep psychological synthesis (30 minutes - HEAVY weight)"""
+        """TIER 2: Deep synthesis - combines episodic extraction + psychological synthesis (20 minutes)"""
         if not self.reflection_enabled:
             return
 
@@ -5620,10 +5524,14 @@ IMPORTANT: Keep response to 1-2 sentences maximum. Express your genuine first co
 
         if time_since_deep >= self.deep_compression_interval:
             if DEBUG_AI:
-                print(f"[DEEP] Psychological synthesis after {time_since_deep:.0f}s (~10-14s)")
+                print(f"[DEEP] Synthesis + episodic extraction after {time_since_deep:.0f}s (~10-15s)")
 
-            # DEEP SYNTHESIS: Evolve baseline_context, worldview, existential stance
-            # This is the heavy operation - runs every 30 minutes instead of 10
+            # COMPREHENSIVE SYNTHESIS: Do everything in one pass
+            # 1. Extract episodic memories (memorable moments)
+            if len(self.recent_responses) >= 3:
+                self._extract_episodic_memories(image_path)
+
+            # 2. Psychological synthesis (baseline_context, worldview, existential stance)
             self._compress_memory_on_reflection(image_path)
 
             # Update time after compression completes
@@ -5990,9 +5898,10 @@ RECENT THOUGHTS (last 10 minutes):
 {recent_thoughts}
 
 TASK: Extract 1-3 specific memorable moments from the above.
-Focus on: Events that happened, changes you noticed, specific observations that stood out
+Focus on: People (arrivals, departures, interactions), events that happened, changes you noticed
 
 Requirements:
+- PRIORITIZE people-related moments (who they were, what they did, how they seemed)
 - Be specific (include timing if mentioned: "Someone arrived around 2:15")
 - Only notable moments (if nothing significant happened, say "Nothing notable")
 - Brief phrases (max 10 words each)
