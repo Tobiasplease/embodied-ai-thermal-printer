@@ -158,6 +158,10 @@ class EmbodiedAI:
         self.current_ai_interval = AI_PROCESS_INTERVAL
         self.last_face_position = None
         self.face_movement_detected = False
+
+        # Track instant reactions to prevent repetition
+        self.last_instant_reaction = None
+        self.last_instant_reaction_time = 0
         
         # Frame processing
         self.frame_count = 0
@@ -633,9 +637,16 @@ class EmbodiedAI:
             # CHECK FOR URGENT REACTIONS FIRST - person arrivals take absolute priority
             urgent = self.urgent_reaction_queue.get_if_urgent(threshold=0.5)  # Lower threshold for faster response
             if urgent:
-                if DEBUG_AI:
-                    print(f"[URGENT] Person arrival - speaking immediate reaction (urgency {urgent['urgency']:.2f})")
-                self._speak_urgent_reaction(urgent['text'])
+                # Deduplicate - don't repeat same instant reaction within 10 seconds
+                if urgent['text'] == self.last_instant_reaction and time.time() - self.last_instant_reaction_time < 10:
+                    if DEBUG_AI:
+                        print(f"[SKIP] Duplicate instant reaction: {urgent['text']}")
+                else:
+                    if DEBUG_AI:
+                        print(f"[URGENT] Person arrival - speaking immediate reaction (urgency {urgent['urgency']:.2f})")
+                    self._speak_urgent_reaction(urgent['text'])
+                    self.last_instant_reaction = urgent['text']
+                    self.last_instant_reaction_time = time.time()
                 # Don't return - still generate proper observation after greeting
 
             # Pass person events to personality for instant captions

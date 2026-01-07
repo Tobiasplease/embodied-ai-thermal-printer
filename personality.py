@@ -1673,7 +1673,8 @@ Continue from where you left off - one unbroken stream of consciousness.{repetit
             what_you_know = ". ".join(knowledge_section) + "."
 
             # SECTION 2: RECENT THOUGHTS (what you've been thinking about)
-            recent_thoughts_section = f"Your thoughts so far: {thought_context}"
+            # thought_context now includes temporal marker "(recent thoughts): ..."
+            recent_thoughts_section = thought_context
 
             # SECTION 3: Assemble context block (clean, structured)
             # SAME for both vision and text-only - unified continuity
@@ -1744,19 +1745,36 @@ Continue from where you left off - one unbroken stream of consciousness.{repetit
                     if DEBUG_AI:
                         print(f"[LOOP] Temperature boosted to {gen_params['temperature']:.2f} to break loop")
 
+                # Build current state marker for temporal grounding
+                if person_count == 0:
+                    current_state = "alone"
+                elif person_count == 1:
+                    current_state = "with 1 person"
+                else:
+                    current_state = f"with {person_count} people"
+
+                # Add person engagement hint if someone present for >5 seconds
+                person_engagement_hint = ""
+                if person_count > 0 and presence_state and hasattr(presence_state, 'presence_duration'):
+                    if presence_state.presence_duration > 5:  # More than 5 seconds
+                        # Encourage noticing and describing the person
+                        person_engagement_hint = "\n(Notice them. What are they doing? How do they seem?)"
+
                 # Build prompt based on whether mid-thought or starting fresh
                 if thought_is_incomplete:
                     # MID-THOUGHT: Still need context, just simpler continuation prompt
                     user_prompt = f"""{context_block}
 
-[What I'm seeing now]{person_visual_reminder}
+[What I'm seeing now]
+Current state: {current_state}{person_visual_reminder}{person_engagement_hint}
 
 (continue):"""
                 else:
                     # FRESH THOUGHT: Simple "Now:" trigger like drawing machine
                     user_prompt = f"""{context_block}
 
-[What I'm seeing now]{person_visual_reminder}
+[What I'm seeing now]
+Current state: {current_state}{person_visual_reminder}{person_engagement_hint}
 
 Now:"""
 
@@ -2967,9 +2985,10 @@ Now:"""
         # Format as flowing paragraph, not numbered list - shows continuity
         if cleaned_thoughts:
             # Join with "..." to show flow
-            return "... ".join(cleaned_thoughts) + " ..."
+            # Add temporal marker to clarify these are PAST thoughts
+            return "(recent thoughts): " + "... ".join(cleaned_thoughts) + " ..."
         else:
-            return "[just waking up]"
+            return "[just beginning]"
 
     def _build_memory_hint_for_awakening(self):
         """Summarize persisted context into a fuzzy, non-literal memory cue."""
