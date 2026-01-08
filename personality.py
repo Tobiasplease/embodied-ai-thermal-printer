@@ -1783,24 +1783,21 @@ Continue from where you left off - one unbroken stream of consciousness.{repetit
                 person_engagement_hint = ""
                 if person_count > 0 and presence_state and hasattr(presence_state, 'presence_duration'):
                     if presence_state.presence_duration > 5:  # More than 5 seconds
-                        # Encourage noticing and describing the person
-                        person_engagement_hint = "\n(Notice them. What are they doing? How do they seem?)"
+                        # Natural prompt to observe, not meta-instruction
+                        person_engagement_hint = " Someone here with me."
 
                 # Build prompt based on whether mid-thought or starting fresh
+                # SIMPLIFIED: Remove meta-markers that confuse roleplay
                 if thought_is_incomplete:
-                    # MID-THOUGHT: Still need context, just simpler continuation prompt
+                    # MID-THOUGHT: Just context and simple trigger
                     user_prompt = f"""{context_block}
 
-[What I'm seeing now]
-Current state: {current_state}{person_visual_reminder}{person_engagement_hint}
-
-(continue):"""
+{current_state}.{person_visual_reminder}{person_engagement_hint}"""
                 else:
-                    # FRESH THOUGHT: Simple "Now:" trigger like drawing machine
+                    # FRESH THOUGHT: Context and "Now:"
                     user_prompt = f"""{context_block}
 
-[What I'm seeing now]
-Current state: {current_state}{person_visual_reminder}{person_engagement_hint}
+{current_state}.{person_visual_reminder}{person_engagement_hint}
 
 Now:"""
 
