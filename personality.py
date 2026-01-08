@@ -5368,9 +5368,9 @@ IMPORTANT: Keep response to 1-2 sentences maximum. Express your genuine first co
                 # TEMPORAL AWARENESS fields
                 'baseline_history': self.baseline_history[-5:] if hasattr(self, 'baseline_history') else [],  # Last 5 baseline changes
                 'last_baseline_update': self.last_baseline_update if hasattr(self, 'last_baseline_update') else 0,  # When baseline was last updated
-                # THREE-TIER COMPRESSION timestamps
-                'last_episodic_compression': self.last_episodic_compression,  # Tier 2: 10-minute episodic extraction
-                'last_deep_compression': self.last_deep_compression,  # Tier 3: 30-minute deep synthesis
+                # TWO-TIER COMPRESSION timestamps
+                'last_environmental_compression': self.last_environmental_compression,  # Tier 1: 5-minute environmental
+                'last_deep_compression': self.last_deep_compression,  # Tier 2: 20-minute deep synthesis
                 'last_reflection_time': self.last_reflection_time,  # Legacy field (kept for compatibility)
                 'timestamp': time.time(),  # CRITICAL: When this state was saved (for calculating sleep duration)
                 'environmental_baseline': self.environmental_baseline  # CRITICAL: Environmental facts
@@ -5474,18 +5474,19 @@ IMPORTANT: Keep response to 1-2 sentences maximum. Express your genuine first co
             self.baseline_history = state.get('baseline_history', [])
             self.last_baseline_update = state.get('last_baseline_update', time.time())
 
-            # THREE-TIER COMPRESSION: Restore timestamps for all tiers
-            # Note: Old saves won't have episodic/deep timestamps - they'll default to now
-            self.last_episodic_compression = state.get('last_episodic_compression', time.time())
+            # TWO-TIER COMPRESSION: Restore timestamps
+            # Note: Old saves might have episodic timestamps - ignore them, use environmental instead
+            self.last_environmental_compression = state.get('last_environmental_compression',
+                                                           state.get('last_episodic_compression', time.time()))
             self.last_deep_compression = state.get('last_deep_compression', time.time())
 
             # Legacy field - kept for backward compatibility but no longer used
             self.last_reflection_time = state.get('last_reflection_time', self.true_session_start)
 
             if DEBUG_AI:
-                episodic_time = time.time() - self.last_episodic_compression
+                env_time = time.time() - self.last_environmental_compression
                 deep_time = time.time() - self.last_deep_compression
-                print(f"Compression timers: Episodic {episodic_time:.0f}s ago (10min), Deep {deep_time:.0f}s ago (30min)")
+                print(f"Compression timers: Environmental {env_time:.0f}s ago (5min), Deep {deep_time:.0f}s ago (20min)")
 
             if DEBUG_AI:
                 print(f"Advanced personality state loaded: {len(self.memory_ref.observations)} observations, {len(self.memory_ref.beliefs)} beliefs, awakening_done={self.awakening_done}")

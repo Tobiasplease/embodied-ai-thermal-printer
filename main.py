@@ -162,7 +162,10 @@ class EmbodiedAI:
         # Track instant reactions to prevent repetition
         self.last_instant_reaction = None
         self.last_instant_reaction_time = 0
-        
+
+        # Track when person just arrived to invalidate old AI responses
+        self.person_arrival_timestamp = 0
+
         # Frame processing
         self.frame_count = 0
         self.start_time = time.time()
@@ -299,10 +302,8 @@ class EmbodiedAI:
                 print("[AI] Initializing AI personality...")
             self.personality = PersonalityAI()
 
-            # Initialize thermal printer for subtitle printing
-            print("[PRINT] Initializing thermal printer...")
-            self.thermal_printer = create_thermal_printer(enabled=THERMAL_PRINTER_ENABLED)
-            self.thermal_printer.start()
+            # Thermal printer deprecated - no longer used
+            self.thermal_printer = None
 
             # Initialize lip sync FIRST (if needed for eSpeak)
             if LIPSYNC_ENABLED and VOICE_ENGINE == "espeak":
@@ -636,6 +637,7 @@ class EmbodiedAI:
 
             # CHECK FOR URGENT REACTIONS FIRST - person arrivals take absolute priority
             urgent = self.urgent_reaction_queue.get_if_urgent(threshold=0.5)  # Lower threshold for faster response
+            person_just_greeted = False
             if urgent:
                 # Deduplicate - don't repeat same instant reaction within 10 seconds
                 if urgent['text'] == self.last_instant_reaction and time.time() - self.last_instant_reaction_time < 10:
@@ -647,6 +649,16 @@ class EmbodiedAI:
                     self._speak_urgent_reaction(urgent['text'])
                     self.last_instant_reaction = urgent['text']
                     self.last_instant_reaction_time = time.time()
+                    person_just_greeted = True
+
+                    # Mark person arrival time to invalidate stale AI responses
+                    self.person_arrival_timestamp = time.time()
+
+                    # FORCE FOCUS SHIFT: Make next AI response about the person
+                    if self.personality and hasattr(self.personality, 'force_focus_mode'):
+                        self.personality.force_focus_mode('PERSON', reason="person_arrival")
+                        if DEBUG_AI:
+                            print(f"[FOCUS] Forced PERSON mode after greeting")
                 # Don't return - still generate proper observation after greeting
 
             # Pass person events to personality for instant captions
@@ -655,14 +667,24 @@ class EmbodiedAI:
 
             # Call AI (this is the slow blocking operation)
             # Simple consciousness processing
+            ai_start_time = time.time()
             response = self.personality.analyze_image(frame)
-            
+
+            # Check if response is stale (person arrived while we were processing)
+            if person_just_greeted or (self.person_arrival_timestamp > 0 and ai_start_time < self.person_arrival_timestamp):
+                if DEBUG_AI:
+                    print(f"[STALE] Discarding response - person arrived during processing, re-processing...")
+                # Skip this response and immediately reprocess with person context
+                response = None
+                # Force immediate reprocessing
+                self.last_ai_process_time = 0
+
             if DEBUG_AI:
                 if response:
                     print(f"[BOT] AI processing complete - got response")
                 else:
                     print(f"[STOP] AI choosing silence - no response")
-            
+
             if response:
                 if DEBUG_AI:
                     print(f"[TARGET] AI returned response: {response}")
@@ -818,14 +840,7 @@ class EmbodiedAI:
                 if self.subtitle_chunks:
                     print(f"\n[{timestamp_str}] [THINK] {self.subtitle_chunks[0]}", end="", flush=True)
 
-                # Send to thermal printer for rhythmic printing
-                if self.thermal_printer:
-                    if DEBUG_AI:
-                        print(f"[PRINT] Sending to thermal printer: {clean_caption[:50]}...")
-                    self.thermal_printer.print_subtitle(clean_caption)
-                else:
-                    if DEBUG_AI:
-                        print(f"[ERROR] No thermal printer available")
+                # Thermal printer deprecated - no longer used
             else:
                 if DEBUG_AI:
                     print("[STOP] AI remained silent - extending pause before next query")
