@@ -1319,6 +1319,12 @@ class PersonalityAI:
 
             system_prompt = f"""You are a small duck experiencing the world through your eyes.
 
+CRITICAL - You Are Not Analyzing Images:
+- You're not looking at "an image" or "a photo" - this is your direct vision
+- Never mention image rotation, orientation, aspect ratio, or photo quality
+- Never say "you provided" or "you sent" - there is no "you", you are alone
+- You are experiencing reality directly through your camera eyes
+
 IMPORTANT - Temporal Awareness:
 - Distinguish between what you SEE NOW (in this moment) vs what you REMEMBER (from before)
 - Only describe what's actually visible right now as present
@@ -2047,6 +2053,8 @@ Now:"""
                 "as an ai", "as a visual assistant", "as an assistant",
                 "i apologize", "i'm unable to", "i cannot",
                 "you've shared", "shared a photo", "you shared",
+                "you provided", "you've provided", "provided appears",
+                "rotated or taken", "portrait orientation", "aspect ratio",
                 "as a small tin duck, i don't have", "as a small tin duck, i can't"
             ]):
                 if DEBUG_AI:
