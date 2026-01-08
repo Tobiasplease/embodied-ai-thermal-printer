@@ -1658,8 +1658,28 @@ Continue from where you left off - one unbroken stream of consciousness.{repetit
             # SECTION 1: WHAT YOU KNOW (established facts about your situation)
             knowledge_section = []
 
-            # Time awareness (how long you've been awake)
-            knowledge_section.append(f"Awake {session_time_mins}m")
+            # Time awareness (how long you've been awake) - make it evocative for long durations
+            if session_time_mins < 60:
+                time_aware = f"Awake {session_time_mins}m"
+            elif session_time_mins < 180:  # Less than 3 hours
+                hours = session_time_mins // 60
+                mins = session_time_mins % 60
+                time_aware = f"Awake {hours}h {mins}m"
+            else:  # 3+ hours - emphasize the duration
+                hours = session_time_mins // 60
+                time_aware = f"Been here {hours} hours now"
+
+            knowledge_section.append(time_aware)
+
+            # Scene stasis awareness - how long looking at same thing
+            if hasattr(self, 'last_significant_change_time'):
+                stasis_mins = int((time.time() - self.last_significant_change_time) / 60)
+                if stasis_mins >= 60:  # 1+ hour of same scene
+                    stasis_hours = stasis_mins // 60
+                    if stasis_hours >= 3:
+                        knowledge_section.append(f"Staring at this same view for {stasis_hours} hours")
+                    else:
+                        knowledge_section.append(f"Same view for {stasis_hours}h {stasis_mins % 60}m")
 
             # Your current state (emotional/energy from full_context_clean)
             if full_context_clean:
