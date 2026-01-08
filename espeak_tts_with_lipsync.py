@@ -205,6 +205,25 @@ class ESpeakWithLipSync:
 
         self.speech_queue.put((text, use_whisper, speed, pitch, on_start_callback, on_end_callback))
 
+    def interrupt(self):
+        """Interrupt current speech and clear queue (for urgent reactions)"""
+        # Clear queue
+        while not self.speech_queue.empty():
+            try:
+                self.speech_queue.get_nowait()
+            except:
+                break
+
+        # Stop any currently playing audio
+        try:
+            import pygame
+            if pygame.mixer.get_init():
+                pygame.mixer.stop()  # Stop all channels
+        except:
+            pass
+
+        self.is_speaking = False
+
     def stop(self):
         """Stop speech system"""
         self.should_stop = True

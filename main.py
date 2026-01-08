@@ -645,7 +645,15 @@ class EmbodiedAI:
                         print(f"[SKIP] Duplicate instant reaction: {urgent['text']}")
                 else:
                     if DEBUG_AI:
-                        print(f"[URGENT] Person arrival - speaking immediate reaction (urgency {urgent['urgency']:.2f})")
+                        print(f"[URGENT] Person arrival - interrupting current speech")
+
+                    # INTERRUPT CURRENT SPEECH immediately
+                    if self.voice_system and hasattr(self.voice_system, 'interrupt'):
+                        self.voice_system.interrupt()
+                        if DEBUG_AI:
+                            print(f"[INTERRUPT] Cleared speech queue and stopped audio")
+
+                    # Now speak the urgent reaction
                     self._speak_urgent_reaction(urgent['text'])
                     self.last_instant_reaction = urgent['text']
                     self.last_instant_reaction_time = time.time()
