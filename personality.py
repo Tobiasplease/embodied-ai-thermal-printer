@@ -1694,6 +1694,28 @@ CONTINUE your stream of consciousness.{repetition_rules}"""
             if presence_context_line:
                 knowledge_section.append(presence_context_line.strip())
 
+            # PHILOSOPHICAL mode enrichment: Add desires, doubts, memories
+            if current_focus == "PHILOSOPHICAL" and observation_count > 5:
+                # Add ONE desire or doubt (most recent, rotate between them)
+                if hasattr(self.memory_ref, 'self_model'):
+                    desires = self.memory_ref.self_model.get('desires', [])
+                    doubts = self.memory_ref.self_model.get('doubts', [])
+
+                    # Alternate between desire and doubt based on observation count
+                    if observation_count % 2 == 0 and desires:
+                        knowledge_section.append(f"(wanting: {desires[-1]})")
+                    elif doubts:
+                        knowledge_section.append(f"(uncertain: {doubts[-1]})")
+
+                # Add ONE memorable moment if available (most significant)
+                if hasattr(self.memory_ref, 'episodic_memories') and len(self.memory_ref.episodic_memories) > 0:
+                    # Get most important recent memory
+                    recent_memories = [m for m in self.memory_ref.episodic_memories[-5:] if m.get('importance', 0) > 0.6]
+                    if recent_memories and observation_count % 3 == 0:
+                        memory = recent_memories[-1]
+                        content = memory.get('content', '')[:80]  # Keep it brief
+                        knowledge_section.append(f"(I remember: {content})")
+
             what_you_know = ". ".join(knowledge_section) + "."
 
             # SECTION 2: RECENT THOUGHTS (what you've been thinking about)
