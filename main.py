@@ -676,7 +676,36 @@ class EmbodiedAI:
             # Call AI (this is the slow blocking operation)
             # Simple consciousness processing
             ai_start_time = time.time()
+
+            # Start a timer thread for placeholder utterance during long processing
+            placeholder_played = False
+            def play_placeholder_if_slow():
+                nonlocal placeholder_played
+                time.sleep(8)  # Wait 8 seconds
+                # Check if still processing and haven't played placeholder yet
+                if self.ai_processing and not placeholder_played:
+                    placeholder_played = True
+                    if self.voice_system and hasattr(self.voice_system, 'speak'):
+                        import random
+                        # Short duck utterances to fill silence
+                        placeholders = ["quack", "...quack"]
+                        placeholder = random.choice(placeholders)
+                        if DEBUG_AI:
+                            print(f"🦆 [PLACEHOLDER] Playing '{placeholder}' during compression")
+                        try:
+                            # Queue the placeholder (voice system handles async)
+                            self.voice_system.speak(placeholder)
+                        except Exception as e:
+                            if DEBUG_AI:
+                                print(f"⚠️ Placeholder failed: {e}")
+
+            import threading
+            placeholder_thread = threading.Thread(target=play_placeholder_if_slow, daemon=True)
+            placeholder_thread.start()
+
             response = self.personality.analyze_image(frame)
+
+            # Processing done - placeholder thread will naturally exit
 
             # Check if response is stale (person arrived while we were processing)
             if person_just_greeted or (self.person_arrival_timestamp > 0 and ai_start_time < self.person_arrival_timestamp):
