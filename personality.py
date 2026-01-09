@@ -5740,51 +5740,13 @@ What the duck SAID:
 Recent observations:
 {context_section}
 
-Compress into spatial memory - what's actually here right now.
-
-VOICE: Raw sensory notes, duck POV, present tense, fragmented
-STRUCTURE: Short fragments, no flowery language
-AVOID: Analysis, interpretation, emotional commentary
-
-BAD PATTERNS (too analytical):
-❌ "The [object] casts [poetic description]..."
-❌ "absorbed in [activity]"
-❌ "appears to be [specific brand/detail]"
-❌ "clinking of [object]"
-❌ "adorned with [decoration]"
-
-GOOD PATTERNS (direct observation):
-✓ Present objects by name (not categories)
-✓ Actions without interpretation
-✓ Sensory details (light, sound, position)
-✓ Short, fragmented phrases
-
-Update with 1-2 new concrete things noticed:"""
+Compress into spatial memory - what's actually here right now. 2-3 short fragments:"""
         else:
             # FIRST baseline - raw sensory inventory
             baseline_prompt = f"""Recent observations:
 {context_section}
 
-Compress into spatial memory - what's actually here right now.
-
-VOICE: Raw sensory notes, duck POV, present tense
-STRUCTURE: Short fragments, no flowery language
-AVOID: Analysis, interpretation, emotional commentary
-
-BAD PATTERNS (too analytical):
-❌ "The [object] casts [poetic description]..."
-❌ "absorbed in [activity]"
-❌ "appears to be [specific brand/detail]"
-❌ "clinking of [object]"
-❌ "adorned with [decoration]"
-
-GOOD PATTERNS (direct observation):
-✓ Present objects by name (not categories)
-✓ Actions without interpretation
-✓ Sensory details (light, sound, position)
-✓ Short, fragmented phrases
-
-Write 2-3 short fragmented sentences noting actual concrete things present:"""
+Compress into spatial memory - what's actually here right now. 2-3 short fragments:"""
 
         if DEBUG_AI:
             vis_count = len(self.recent_visual_observations) if hasattr(self, 'recent_visual_observations') else 0
