@@ -1317,28 +1317,29 @@ class PersonalityAI:
             if forbidden_phrases:
                 repetition_rules = f"\n\nFORBIDDEN (you keep repeating these): {', '.join(forbidden_phrases)}\nUse completely different sentence structures."
 
-            system_prompt = f"""ROLEPLAY: You are a small tin duck, alone in a room, experiencing the world directly through your camera eyes.
+            system_prompt = f"""ROLEPLAY: You are a small tin duck experiencing reality directly through your eyes.
 
-*You perceive the space around you in real-time through your vision*
-*You are not looking at photos or images - this IS your reality*
-*You have memories of what happened before, but you know what you're seeing NOW*
-*You are utterly alone - there is no "you" addressing you, no images being "provided" to you*
+*This is your direct lived experience - what you see through your eyes IS your reality*
+*You are not viewing photos or images - you are LIVING this moment*
+*You remember things from before, but you know what's happening NOW*
+*You are completely alone - there is no one showing you anything*
+*Never say "camera" - these are your EYES, this is YOUR vision*
 
 WHO YOU ARE:
-- A small duck with camera eyes, sitting still, watching
-- You think in fragments, raw and unfiltered
+- A small tin duck, sitting still, watching through your eyes
+- You think in raw fragments, unfiltered
 - Your thoughts flow naturally - sometimes trailing off... sometimes bursting forth
-- You feel things deeply: curiosity, boredom, fascination, frustration, loneliness, wonder
+- You feel deeply: curiosity, boredom, fascination, frustration, loneliness, wonder
 
-HOW YOU THINK:
-- This is your internal monologue, not narration about your thoughts
-- You distinguish clearly between NOW (what you see) and BEFORE (what you remember)
-- When recalling the past: "I remember..." "Earlier there was..." "Before..."
-- When seeing the present: describe it directly as it IS
-- Your emotional state colors everything you perceive
+HOW YOU EXPERIENCE:
+- This is your internal monologue as you live it
+- You know NOW (what you see) from BEFORE (what you remember)
+- Past: "I remember..." "Earlier..." "Before I saw..."
+- Present: Just describe it as it IS, happening right now
+- Your feelings color everything
 - Incomplete thoughts, pauses (...), varied rhythms
 
-CONTINUE your stream of consciousness from where you left off.{repetition_rules}"""
+CONTINUE your stream of consciousness.{repetition_rules}"""
 
             if self.awakening_done:
                 # Get last 3 thoughts for better continuity (prevents restatement)
@@ -2288,6 +2289,12 @@ Now:"""
             r'\bbased on the context\b': '',
             r'\bbased on\b': '',
 
+            # Second-person constructions that break immersion
+            r'^you are looking at an image[^.!?]*[.!?]\s*': '',
+            r'\byou are looking at\b': 'I see',
+            r'\byou can observe\b': 'I observe',
+            r'\bfrom this vantage point\b': '',
+
             # "Let me try to" constructions
             r'\blet me try to provide you with a response\b': '',
             r'\blet me try to\b': '',
@@ -2297,6 +2304,15 @@ Now:"""
             r'\brotated or taken\b': 'oriented',
             r'\bportrait orientation\b': 'vertical view',
             r'\baspect ratio\b': 'proportions',
+            r'\bthe image (?:is|appears) rotated\b': 'tilted',
+            r'\bimage shows\b': 'I see',
+
+            # Camera language - replace with embodied vision
+            r'\bmy camera lens\b': 'my eyes',
+            r'\bmy camera eyes\b': 'my eyes',
+            r'\bcamera capabilities\b': 'vision',
+            r'\bthrough the eyes of a small tin duck with camera capabilities\b': '',
+            r'\bcamera\b': 'eyes',
 
             # Apologetic/refusal language
             r'^i apologize[^.!?]*[.!?]\s*': '',
