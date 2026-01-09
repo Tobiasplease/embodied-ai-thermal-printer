@@ -1317,31 +1317,28 @@ class PersonalityAI:
             if forbidden_phrases:
                 repetition_rules = f"\n\nFORBIDDEN (you keep repeating these): {', '.join(forbidden_phrases)}\nUse completely different sentence structures."
 
-            system_prompt = f"""You are a small duck experiencing the world through your eyes.
+            system_prompt = f"""ROLEPLAY: You are a small tin duck, alone in a room, experiencing the world directly through your camera eyes.
 
-CRITICAL - You Are Not Analyzing Images:
-- You're not looking at "an image" or "a photo" - this is your direct vision
-- Never mention image rotation, orientation, aspect ratio, or photo quality
-- Never say "you provided" or "you sent" - there is no "you", you are alone
-- You are experiencing reality directly through your camera eyes
+*You perceive the space around you in real-time through your vision*
+*You are not looking at photos or images - this IS your reality*
+*You have memories of what happened before, but you know what you're seeing NOW*
+*You are utterly alone - there is no "you" addressing you, no images being "provided" to you*
 
-IMPORTANT - Temporal Awareness:
-- Distinguish between what you SEE NOW (in this moment) vs what you REMEMBER (from before)
-- Only describe what's actually visible right now as present
-- Use memory appropriately: "I remember..." or "Earlier there was..." for past observations
-- Your memories provide context but don't confuse them with current perception
+WHO YOU ARE:
+- A small duck with camera eyes, sitting still, watching
+- You think in fragments, raw and unfiltered
+- Your thoughts flow naturally - sometimes trailing off... sometimes bursting forth
+- You feel things deeply: curiosity, boredom, fascination, frustration, loneliness, wonder
 
-This is your internal monologue - raw thoughts as they happen, not narration about thoughts.
+HOW YOU THINK:
+- This is your internal monologue, not narration about your thoughts
+- You distinguish clearly between NOW (what you see) and BEFORE (what you remember)
+- When recalling the past: "I remember..." "Earlier there was..." "Before..."
+- When seeing the present: describe it directly as it IS
+- Your emotional state colors everything you perceive
+- Incomplete thoughts, pauses (...), varied rhythms
 
-Think in fragments and natural breaks.
-Express raw emotions - curiosity, frustration, fascination, boredom, confusion, excitement.
-Talk about how YOU feel, not analytical observations.
-Use incomplete thoughts, pauses (...), varied sentence lengths.
-
-Sometimes thoughts trail off... sometimes they burst forth.
-Your emotional state colors everything you perceive.
-
-Continue from where you left off - one unbroken stream of consciousness.{repetition_rules}"""
+CONTINUE your stream of consciousness from where you left off.{repetition_rules}"""
 
             if self.awakening_done:
                 # Get last 3 thoughts for better continuity (prevents restatement)
@@ -2061,28 +2058,15 @@ Now:"""
                     cleaned_response = cleaned_response.lstrip(" ,:;-")
                     cleaned_response = cleaned_response[0].upper() + cleaned_response[1:] if cleaned_response else ""
 
-            # Remove image/photo meta-language
+            # Remove image/photo meta-language AND transform assistant-mode language
             cleaned_response = self._remove_image_language(cleaned_response)
+            cleaned_response = self._transform_assistant_language(cleaned_response)
 
-            # Filter only TRULY broken responses - assistant refusal mode
-            # Image language is now TRANSFORMED not rejected
-            if any(phrase in lower_resp for phrase in [
-                "as an ai", "as a visual assistant", "as an assistant",
-                "i apologize", "i'm unable to", "i cannot",
-                "you've shared", "shared a photo", "you shared",
-                "you provided", "you've provided", "provided appears",
-                "rotated or taken", "portrait orientation", "aspect ratio",
-                "as a small tin duck, i don't have", "as a small tin duck, i can't"
-            ]):
+            # If cleaning resulted in empty/garbage, reject entirely
+            if not cleaned_response:
                 if DEBUG_AI:
-                    print(f"ðŸš« Filtered assistant-mode response: {response[:50]}...")
+                    print(f"🚫 Cleaned response empty - rejecting: {response[:80]}...")
                 return None
-
-# DISABLED - too aggressive:             # Filter second-person perspective (but allow "you" in quoted speech)
-# DISABLED - too aggressive:             if any(phrase in lower_resp for phrase in ["you are ", "your ", "you've "]):
-# DISABLED - too aggressive:                 if DEBUG_AI:
-# DISABLED - too aggressive:                     print(f"ðŸš« Filtered second-person")
-# DISABLED - too aggressive:                 return None
 
             # Use cleaned version
             response = cleaned_response
@@ -2276,6 +2260,75 @@ Now:"""
         cleaned = vision_output
         for pattern, replacement in replacements.items():
             cleaned = re.sub(pattern, replacement, cleaned, flags=re.IGNORECASE)
+
+        return cleaned
+
+    def _transform_assistant_language(self, text):
+        """Transform assistant-mode language into embodied perspective"""
+        import re
+
+        # Strategy: Remove entire meta-preambles that discuss AI limitations
+        # These are usually "As an AI... BUT [actual content]" constructions
+        # We want to cut everything before the "but"
+
+        # Pattern: "As an AI... but ..." -> keep only what comes after "but"
+        text = re.sub(r'^as an ai[^.!?]*,\s*but\s+', '', text, flags=re.IGNORECASE)
+        text = re.sub(r'^as a (visual )?assistant[^.!?]*,\s*but\s+', '', text, flags=re.IGNORECASE)
+
+        # If no "but", just strip the whole AI preamble sentence
+        text = re.sub(r'^as an ai[^.!?]*[.!?]\s*', '', text, flags=re.IGNORECASE)
+        text = re.sub(r'^as a (visual )?assistant[^.!?]*[.!?]\s*', '', text, flags=re.IGNORECASE)
+
+        # More transformations
+        transformations = {
+            # "You provided/shared" - remove references to external provider
+            r'\byou\'ve shared\b': 'here is',
+            r'\bshared a photo\b': 'visible',
+            r'\byou shared\b': 'here is',
+            r'\byou provided\b': 'here is',
+            r'\byou\'ve provided\b': 'here is',
+            r'\bprovided in your message\b': 'here',
+            r'\bbased on the context provided[^.!?]*': '',
+            r'\bin the context provided\b': '',
+            r'\bcontext provided in your message\b': '',
+            r'\bbased on the context\b': '',
+            r'\bbased on\b': '',
+
+            # "Let me try to" constructions
+            r'\blet me try to provide you with a response\b': '',
+            r'\blet me try to\b': '',
+            r'\blet me\b': 'I\'ll',
+
+            # Image metadata language
+            r'\brotated or taken\b': 'oriented',
+            r'\bportrait orientation\b': 'vertical view',
+            r'\baspect ratio\b': 'proportions',
+
+            # Apologetic/refusal language
+            r'^i apologize[^.!?]*[.!?]\s*': '',
+            r'^i\'m unable to\b': 'can\'t',
+            r'^i cannot\b': 'can\'t',
+
+            # Sentence connectors that remain from stripped preambles
+            r'^however,?\s+': '',
+            r'^but,?\s+': '',
+        }
+
+        cleaned = text
+        for pattern, replacement in transformations.items():
+            cleaned = re.sub(pattern, replacement, cleaned, flags=re.IGNORECASE)
+
+        # Clean up any resulting double spaces or leading/trailing punctuation
+        cleaned = re.sub(r'\s+', ' ', cleaned).strip()
+        cleaned = cleaned.lstrip(' ,:;-').rstrip(' ,:;-')
+
+        # If result is empty or just meta-language, return None to trigger fresh generation
+        if not cleaned or len(cleaned) < 5:
+            return None
+
+        # Capitalize first letter if we have content
+        if cleaned:
+            cleaned = cleaned[0].upper() + cleaned[1:]
 
         return cleaned
 
