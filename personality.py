@@ -1688,6 +1688,22 @@ CONTINUE your stream of consciousness.{repetition_rules}"""
                 # Clean up any "The image shows" prefix if it leaked through
                 env_clean = env_context.strip()
                 env_clean = re.sub(r'^(the image shows|this image shows)\s*', '', env_clean, flags=re.IGNORECASE)
+
+                # Add temporal framing if baseline is old (> 2 minutes)
+                baseline_age_minutes = 0
+                if hasattr(self, 'environmental_baseline_created_at') and self.environmental_baseline_created_at:
+                    baseline_age_minutes = int((time.time() - self.environmental_baseline_created_at) / 60)
+
+                if baseline_age_minutes > 2:
+                    # Been here a while - frame as "established" to prevent redescription
+                    if baseline_age_minutes < 5:
+                        env_clean = f"{env_clean} [just established]"
+                    elif baseline_age_minutes < 15:
+                        env_clean = f"{env_clean} [established {baseline_age_minutes}min ago]"
+                    else:
+                        # Very old baseline - emphasize "still here"
+                        env_clean = f"Still in the same space. {env_clean} [established {baseline_age_minutes}min ago]"
+
                 knowledge_section.append(env_clean)
 
             # Presence awareness (who's here)
