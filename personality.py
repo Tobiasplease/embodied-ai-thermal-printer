@@ -1786,14 +1786,21 @@ CONTINUE your stream of consciousness.{repetition_rules}"""
 
                 # Build prompt based on whether mid-thought or starting fresh
                 # SIMPLIFIED: Remove meta-markers that confuse roleplay
+
+                # TEMPORAL FRAMING: Clarify present vs past based on person detection
+                temporal_frame = ""
+                if person_count == 0 and any(word in context_block.lower() for word in ['person', 'man', 'woman', 'human', 'he ', 'she ']):
+                    # Context mentions people but none present NOW - clarify
+                    temporal_frame = "\n(Any people mentioned above were BEFORE - you're alone NOW)"
+
                 if thought_is_incomplete:
                     # MID-THOUGHT: Just context and simple trigger
-                    user_prompt = f"""{context_block}
+                    user_prompt = f"""{context_block}{temporal_frame}
 
 {current_state}.{person_visual_reminder}{person_engagement_hint}"""
                 else:
                     # FRESH THOUGHT: Context and "Now:"
-                    user_prompt = f"""{context_block}
+                    user_prompt = f"""{context_block}{temporal_frame}
 
 {current_state}.{person_visual_reminder}{person_engagement_hint}
 
