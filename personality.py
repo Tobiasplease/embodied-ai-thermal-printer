@@ -2062,13 +2062,7 @@ Now:"""
             cleaned_response = self._remove_image_language(cleaned_response)
             cleaned_response = self._transform_assistant_language(cleaned_response)
 
-            # If cleaning resulted in empty/garbage, reject entirely
-            if not cleaned_response:
-                if DEBUG_AI:
-                    print(f"🚫 Cleaned response empty - rejecting: {response[:80]}...")
-                return None
-
-            # Use cleaned version
+            # Transformation now returns placeholder if empty, never None
             response = cleaned_response
 
             # Check for phrase repetition - SUPPRESS to break loops
@@ -2322,9 +2316,12 @@ Now:"""
         cleaned = re.sub(r'\s+', ' ', cleaned).strip()
         cleaned = cleaned.lstrip(' ,:;-').rstrip(' ,:;-')
 
-        # If result is empty or just meta-language, return None to trigger fresh generation
+        # If result is empty, return simple duck utterance to avoid silence
         if not cleaned or len(cleaned) < 5:
-            return None
+            # Simple placeholder - duck being a duck
+            import random
+            placeholders = ["Quack.", "Quack quack.", "...quack.", "I am a duck."]
+            return random.choice(placeholders)
 
         # Capitalize first letter if we have content
         if cleaned:
