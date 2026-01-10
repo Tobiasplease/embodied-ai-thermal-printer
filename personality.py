@@ -1703,11 +1703,11 @@ Continue your stream of consciousness from where you left off.{repetition_rules}
 
                 # TEMPORAL FRAMING: Handle person presence/absence changes
                 if baseline_mentions_person and current_person_count == 0:
-                    # Baseline mentions people but they're gone - add temporal context
+                    # Baseline mentions people but they're gone - emphasize current aloneness
                     if baseline_age_minutes < 5:
-                        env_clean = f"What you observed {baseline_age_minutes}min ago: {env_clean}\nChange since then: The person/people left"
+                        env_clean = f"What you saw {baseline_age_minutes}min ago: {env_clean}\nNOW: You are alone. They left."
                     else:
-                        env_clean = f"Earlier memory ({baseline_age_minutes}min ago): {env_clean}\nNow: They've left - space is empty"
+                        env_clean = f"Earlier memory ({baseline_age_minutes}min ago): {env_clean}\nNOW: You're alone - no one here anymore."
                 elif baseline_age_minutes > 2:
                     # Been here a while - frame as "established" to prevent redescription
                     if baseline_age_minutes < 5:
