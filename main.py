@@ -186,6 +186,7 @@ class EmbodiedAI:
         # URGENT REACTION QUEUE (thread-safe, for person arrivals/departures)
         self.urgent_reaction_queue = UrgentReactionQueue()
         self.last_urgent_reaction_time = 0  # Cooldown to prevent spamming
+        self.pending_urgent_reaction = None  # Urgent reaction waiting for chunks to finish
 
         # Silence period tracking
         self.in_silence_period = False
@@ -482,6 +483,26 @@ class EmbodiedAI:
                     if DEBUG_AI:
                         print(f"💓 Heartbeat: frame {self.frame_count}, uptime {int(current_time - self.start_time)}s")
 
+                # CHECK FOR LONG COMPRESSION - speak placeholder if compression is taking >10s
+                if (hasattr(self.personality, 'is_compressing') and self.personality.is_compressing and
+                    hasattr(self.personality, 'compression_start_time')):
+                    compression_duration = current_time - self.personality.compression_start_time
+                    time_since_last_speech = current_time - getattr(self, 'last_speech_time', 0)
+
+                    # If compression >10s AND >7s since last utterance, speak placeholder
+                    if compression_duration > 10.0 and time_since_last_speech > 7.0:
+                        import random
+                        placeholders = ["quack", "...quack", "quack.", "I am a small duck."]
+                        placeholder = random.choice(placeholders)
+
+                        if DEBUG_AI:
+                            print(f"[COMPRESS] Long compression ({compression_duration:.0f}s) - speaking placeholder")
+
+                        # Speak placeholder (bypasses AI thread)
+                        self._speak_compression_placeholder(placeholder)
+                        self.last_speech_time = current_time
+
+
                 # Detect face movement for dynamic pacing (every 5 frames to save CPU)
                 if self.frame_count % 5 == 0:
                     self._detect_face_movement(frame)
@@ -626,7 +647,112 @@ class EmbodiedAI:
                 cap.release()
             cv2.destroyAllWindows()
             self.shutdown()
-    
+
+    def _speak_compression_placeholder(self, text):
+        """Speak placeholder during long compression (bypasses AI thread)"""
+        if not self.voice_system or not text:
+            return
+
+        if DEBUG_AI:
+            print(f"[COMPRESS] Speaking placeholder: {text}")
+
+        # Print to console
+        timestamp_str = time.strftime("%H:%M:%S")
+        print(f"\n[{timestamp_str}] [COMPRESS] {text}")
+
+        # Show on subtitle if available
+        if self.subtitle_projector:
+            try:
+                self.subtitle_projector.display(text)
+            except:
+                pass
+
+        # Speak with simple callback to clear subtitle when done
+        def speak_worker():
+            try:
+                self.voice_system.speak(text)
+                # Clear subtitle after speaking
+                if self.subtitle_projector:
+                    try:
+                        self.subtitle_projector.clear()
+                    except:
+                        pass
+            except Exception as e:
+                if DEBUG_AI:
+                    print(f"[WARN] Compression placeholder TTS error: {e}")
+
+        threading.Thread(target=speak_worker, daemon=True).start()
+
+    def _speak_urgent_reaction_with_subtitle(self, text):
+        """Speak urgent reaction with proper subtitle management (called after chunks finish)"""
+        if not self.voice_system or not text:
+            return
+
+        if DEBUG_AI:
+            print(f"[AUDIO] Speaking urgent reaction with subtitle: {text}")
+
+        # Print to console
+        timestamp_str = time.strftime("%H:%M:%S")
+        print(f"\n[{timestamp_str}] [URGENT] {text}")
+
+        # ADD TO CONVERSATION HISTORY
+        if self.personality:
+            # UNIFIED SYSTEM: Record observation in focus engine
+            if hasattr(self.personality, 'focus_engine') and hasattr(self.personality.focus_engine, 'record_observation'):
+                current_focus = getattr(self.personality, 'current_focus_mode', 'VISUAL')
+                self.personality.focus_engine.record_observation(text, current_focus)
+
+            self.personality.recent_responses.append(text)
+            if len(self.personality.recent_responses) > self.personality.max_conversation_history:
+                self.personality.recent_responses.pop(0)
+
+        # Show subtitle when jaw starts moving
+        def on_jaw_movement():
+            if self.subtitle_projector:
+                try:
+                    self.subtitle_projector.display(text)
+                    if DEBUG_AI:
+                        print(f"[PROJECT] Urgent reaction subtitle: '{text[:50]}...'")
+                except Exception as e:
+                    if DEBUG_AI:
+                        print(f"[WARN] Projector update error: {e}")
+
+        # Clear subtitle when finished
+        def on_urgent_finished():
+            if self.subtitle_projector:
+                try:
+                    self.subtitle_projector.clear()
+                except:
+                    pass
+
+            # Show "..." after 2s (shorter than normal since contextual response is coming)
+            def show_thinking():
+                time.sleep(2.0)
+                if self.subtitle_projector:
+                    try:
+                        self.subtitle_projector.display("...")
+                    except:
+                        pass
+            threading.Thread(target=show_thinking, daemon=True).start()
+
+        # Speak with jaw movement callbacks using voice system's callback support
+        def speak_worker():
+            try:
+                emotion_speed, emotion_pitch = self._get_emotional_voice_params()
+
+                # Use voice system's speak with callbacks (same as regular chunks)
+                self.voice_system.speak(
+                    text,
+                    speed=emotion_speed,
+                    pitch=emotion_pitch,
+                    on_start_callback=on_jaw_movement,  # Triggers when jaw starts moving
+                    on_end_callback=on_urgent_finished   # Triggers when speech finishes
+                )
+            except Exception as e:
+                if DEBUG_AI:
+                    print(f"[WARN] TTS error: {e}")
+
+        threading.Thread(target=speak_worker, daemon=True).start()
 
     def _ai_processing_thread(self, frame, timestamp, person_events=None):
         """AI processing in separate thread (EXACT machine.py pattern)"""
@@ -635,8 +761,8 @@ class EmbodiedAI:
             if DEBUG_AI:
                 print(f"[AI] AI thread processing frame at {timestamp}")
 
-            # CHECK FOR URGENT REACTIONS FIRST - person arrivals take absolute priority
-            urgent = self.urgent_reaction_queue.get_if_urgent(threshold=0.5)  # Lower threshold for faster response
+            # CHECK FOR URGENT REACTIONS - queue them to fire after current chunks finish
+            urgent = self.urgent_reaction_queue.get_if_urgent(threshold=0.5)
             person_just_greeted = False
             if urgent:
                 # Deduplicate - don't repeat same instant reaction within 10 seconds
@@ -645,16 +771,10 @@ class EmbodiedAI:
                         print(f"[SKIP] Duplicate instant reaction: {urgent['text']}")
                 else:
                     if DEBUG_AI:
-                        print(f"[URGENT] Person arrival - interrupting current speech")
+                        print(f"[URGENT] Person arrival detected - will speak after current chunks finish")
 
-                    # INTERRUPT CURRENT SPEECH immediately
-                    if self.voice_system and hasattr(self.voice_system, 'interrupt'):
-                        self.voice_system.interrupt()
-                        if DEBUG_AI:
-                            print(f"[INTERRUPT] Cleared speech queue and stopped audio")
-
-                    # Now speak the urgent reaction
-                    self._speak_urgent_reaction(urgent['text'])
+                    # DON'T INTERRUPT - instead queue as pending urgent reaction
+                    self.pending_urgent_reaction = urgent['text']
                     self.last_instant_reaction = urgent['text']
                     self.last_instant_reaction_time = time.time()
                     person_just_greeted = True
@@ -666,7 +786,7 @@ class EmbodiedAI:
                     if self.personality and hasattr(self.personality, 'force_focus_mode'):
                         self.personality.force_focus_mode('PERSON', reason="person_arrival")
                         if DEBUG_AI:
-                            print(f"[FOCUS] Forced PERSON mode after greeting")
+                            print(f"[FOCUS] Forced PERSON mode for next response")
                 # Don't return - still generate proper observation after greeting
 
             # Pass person events to personality for instant captions
@@ -677,31 +797,8 @@ class EmbodiedAI:
             # Simple consciousness processing
             ai_start_time = time.time()
 
-            # Start a timer thread for placeholder utterance during long processing
-            placeholder_played = False
-            def play_placeholder_if_slow():
-                nonlocal placeholder_played
-                time.sleep(8)  # Wait 8 seconds
-                # Check if still processing and haven't played placeholder yet
-                if self.ai_processing and not placeholder_played:
-                    placeholder_played = True
-                    if self.voice_system and hasattr(self.voice_system, 'speak'):
-                        import random
-                        # Short duck utterances to fill silence
-                        placeholders = ["quack", "...quack"]
-                        placeholder = random.choice(placeholders)
-                        if DEBUG_AI:
-                            print(f"🦆 [PLACEHOLDER] Playing '{placeholder}' during compression")
-                        try:
-                            # Queue the placeholder (voice system handles async)
-                            self.voice_system.speak(placeholder)
-                        except Exception as e:
-                            if DEBUG_AI:
-                                print(f"⚠️ Placeholder failed: {e}")
-
-            import threading
-            placeholder_thread = threading.Thread(target=play_placeholder_if_slow, daemon=True)
-            placeholder_thread.start()
+            # Placeholder utterances removed - were firing too frequently
+            # TODO: Revisit with better timing detection for compression-only silences
 
             response = self.personality.analyze_image(frame)
 
@@ -866,6 +963,14 @@ class EmbodiedAI:
                                 if self.caption_version != chunk_0_version:
                                     return  # Old caption - ignore
                                 print(f"\n[OK] Chunk 0 finished!")
+
+                                # Clear subtitle immediately when chunk finishes
+                                if self.subtitle_projector:
+                                    try:
+                                        self.subtitle_projector.clear()
+                                    except Exception as e:
+                                        pass
+
                                 self._speak_next_chunk(0, chunk_0_version)
 
                             self._speak_async(first_chunk, total_caption_words=total_words,
@@ -983,20 +1088,44 @@ class EmbodiedAI:
                 return  # Old caption - ignore
             print(f"\n[OK] Chunk {next_idx} finished!")
 
-            # CHECK FOR URGENT REACTIONS BEFORE CONTINUING CHUNK CHAIN
-            urgent = self.urgent_reaction_queue.get_if_urgent(threshold=0.6)
-            if urgent:
-                # URGENT REACTION - interrupt caption chain
+            # Clear subtitle when chunk finishes
+            if self.subtitle_projector:
+                try:
+                    self.subtitle_projector.clear()
+                except:
+                    pass
+
+            # If this was the LAST chunk, show "..." after 5s of silence (waiting for next thought)
+            is_last_chunk = (next_idx + 1) >= len(self.subtitle_chunks)
+            if is_last_chunk:
+                import threading
+                def show_thinking_ellipsis():
+                    time.sleep(5.0)  # Wait 5 seconds of blank silence first
+                    # Only show "..." if still waiting (caption version hasn't changed)
+                    if self.caption_version == expected_version and self.subtitle_projector:
+                        try:
+                            self.subtitle_projector.display("...")
+                        except:
+                            pass
+                threading.Thread(target=show_thinking_ellipsis, daemon=True).start()
+
+            # CHECK FOR PENDING URGENT REACTION (person arrival waiting for chunks to finish)
+            if is_last_chunk and self.pending_urgent_reaction:
                 if DEBUG_AI:
-                    print(f"[URGENT] URGENT REACTION interrupting (urgency {urgent['urgency']:.2f}): {urgent['text']}")
+                    print(f"[URGENT] Last chunk finished - speaking urgent reaction after 1s delay")
 
-                # Increment version to abort old caption chain
-                with self.subtitle_lock:
-                    self.caption_version += 1
+                # Wait 1 second after chunks finish, then speak urgent reaction
+                urgent_text = self.pending_urgent_reaction
+                self.pending_urgent_reaction = None  # Clear it
 
-                # Speak urgent reaction immediately
-                self._speak_urgent_reaction(urgent['text'])
-                return  # DON'T continue old caption chain
+                def delayed_urgent_reaction():
+                    time.sleep(1.0)  # 1 second breathing room
+
+                    # Speak the urgent reaction (subtitle shows on jaw movement)
+                    self._speak_urgent_reaction_with_subtitle(urgent_text)
+
+                threading.Thread(target=delayed_urgent_reaction, daemon=True).start()
+                return  # Don't continue chunk chain - urgent reaction takes over
 
             # No urgent reaction - continue normal chunk chain
             self._speak_next_chunk(next_idx, expected_version)  # Recursive chain!
@@ -1042,6 +1171,78 @@ class EmbodiedAI:
         thread = threading.Thread(target=speak_worker, daemon=True)
         thread.start()
 
+    def _speak_urgent_reaction_with_subtitle(self, text):
+        """Speak urgent reaction with proper subtitle management (called after chunks finish)"""
+        if not self.voice_system or not text:
+            return
+
+        if DEBUG_AI:
+            print(f"[AUDIO] Speaking urgent reaction with subtitle: {text}")
+
+        # Print to console
+        timestamp_str = time.strftime("%H:%M:%S")
+        print(f"\n[{timestamp_str}] [URGENT] {text}")
+
+        # ADD TO CONVERSATION HISTORY
+        if self.personality:
+            # UNIFIED SYSTEM: Record observation in focus engine
+            if hasattr(self.personality, 'focus_engine') and hasattr(self.personality.focus_engine, 'record_observation'):
+                current_focus = getattr(self.personality, 'current_focus_mode', 'VISUAL')
+                self.personality.focus_engine.record_observation(text, current_focus)
+
+            self.personality.recent_responses.append(text)
+            if len(self.personality.recent_responses) > self.personality.max_conversation_history:
+                self.personality.recent_responses.pop(0)
+
+        # Show subtitle when jaw starts moving
+        def on_jaw_movement():
+            if self.subtitle_projector:
+                try:
+                    self.subtitle_projector.display(text)
+                    if DEBUG_AI:
+                        print(f"[PROJECT] Urgent reaction subtitle: '{text[:50]}...'")
+                except Exception as e:
+                    if DEBUG_AI:
+                        print(f"[WARN] Projector update error: {e}")
+
+        # Clear subtitle when finished
+        def on_urgent_finished():
+            if self.subtitle_projector:
+                try:
+                    self.subtitle_projector.clear()
+                except:
+                    pass
+
+            # Show "..." after 2s (shorter than normal since contextual response is coming)
+            import threading
+            def show_thinking():
+                time.sleep(2.0)
+                if self.subtitle_projector:
+                    try:
+                        self.subtitle_projector.display("...")
+                    except:
+                        pass
+            threading.Thread(target=show_thinking, daemon=True).start()
+
+        # Speak with jaw movement callbacks using voice system's callback support
+        def speak_worker():
+            try:
+                emotion_speed, emotion_pitch = self._get_emotional_voice_params()
+
+                # Use voice system's speak with callbacks (same as regular chunks)
+                self.voice_system.speak(
+                    text,
+                    speed=emotion_speed,
+                    pitch=emotion_pitch,
+                    on_start_callback=on_jaw_movement,  # Triggers when jaw starts moving
+                    on_end_callback=on_urgent_finished   # Triggers when speech finishes
+                )
+            except Exception as e:
+                if DEBUG_AI:
+                    print(f"[WARN] TTS error: {e}")
+
+        threading.Thread(target=speak_worker, daemon=True).start()
+
     def _speak_urgent_reaction(self, text):
         """Speak urgent reaction immediately (bypasses chunking, simple TTS)"""
         if not self.voice_system or not text:
@@ -1070,20 +1271,44 @@ class EmbodiedAI:
             if len(self.personality.recent_responses) > self.personality.max_conversation_history:
                 self.personality.recent_responses.pop(0)
 
-        # Update projector
-        if self.subtitle_projector:
-            try:
-                self.subtitle_projector.display(text)
-            except Exception as e:
-                if DEBUG_AI:
-                    print(f"[WARN] Projector update error: {e}")
+        # Update projector when jaw moves (using callback like normal chunks)
+        def on_urgent_jaw_movement():
+            if self.subtitle_projector:
+                try:
+                    self.subtitle_projector.display(text)
+                except Exception as e:
+                    if DEBUG_AI:
+                        print(f"[WARN] Projector update error: {e}")
 
-        # Speak it (no callbacks, simple immediate speech)
+        def on_urgent_finished():
+            # Clear subtitle when urgent reaction finishes speaking
+            if self.subtitle_projector:
+                try:
+                    self.subtitle_projector.clear()
+                except:
+                    pass
+
+            # Show "..." after 5s if still waiting for next thought
+            import threading
+            def show_thinking():
+                time.sleep(5.0)
+                if self.subtitle_projector:
+                    try:
+                        self.subtitle_projector.display("...")
+                    except:
+                        pass
+            threading.Thread(target=show_thinking, daemon=True).start()
+
+        # Speak it with callbacks (same pattern as regular chunks)
         def speak_worker():
             try:
                 # Get emotional voice variations
                 emotion_speed, emotion_pitch = self._get_emotional_voice_params()
+                # Call jaw movement callback when speaking starts
+                on_urgent_jaw_movement()
                 self.voice_system.speak(text, speed=emotion_speed, pitch=emotion_pitch)
+                # Call finish callback when done
+                on_urgent_finished()
             except Exception as e:
                 if DEBUG_AI:
                     print(f"[WARN] TTS error: {e}")
@@ -1424,7 +1649,7 @@ class EmbodiedAI:
             import base64
             from config import OLLAMA_URL, SINGLE_MULTIMODAL_MODEL
 
-            # Get current frame for visual context
+            # Get cq    urrent frame for visual context
             image_b64 = None
             if hasattr(self, 'latest_frame_path') and self.latest_frame_path:
                 try:

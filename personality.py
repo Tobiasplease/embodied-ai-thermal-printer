@@ -420,7 +420,7 @@ class PersonalityAI:
         
         # Conversation continuity tracking 
         self.recent_responses = []
-        self.max_conversation_history = 30  # Keep recent history for compression (needs minimum 5)
+        self.max_conversation_history = 50  # Keep recent history for compression (lightweight window)
         
         # Emotional state cycling system
         self.emotional_states = [
@@ -543,14 +543,19 @@ class PersonalityAI:
         self.environmental_compression_interval = 300  # 5 minutes
         self.environmental_baseline = ""
         self.environmental_baseline_created_at = None
+        self.is_compressing = False  # Flag for main loop to detect long compression
+        self.compression_start_time = 0  # When current compression started
 
-        # TIER 2: Deep Synthesis (20 minutes) - COMPREHENSIVE
-        # Purpose: "What happened + What does it mean + How am I evolving?"
-        # Output: baseline_context, worldview_summary, existential_stance + episodic memories
-        # Combines old episodic + deep compression into one pass
-        self.last_deep_compression = time.time()
-        self.deep_compression_interval = 1200  # 20 minutes (was 30min for deep, 10min for episodic)
+        # TIER 2: Daily Memory Compression (once per day) - MINIMAL LONG-TERM CONTINUITY
+        # Purpose: Compress each day into one 2-3 sentence memory for 6-week character arc
+        # Output: One distilled memory per day (cap at last 10 days)
+        self.daily_memories = []  # List of (day_number, memory_text) tuples
+        self.current_day_start = time.time()  # When current day started
+        self.days_remembered = 1  # Day counter
+        self.last_reflection_time = time.time()  # Legacy field (kept for compatibility)
         self.baseline_context = ""  # Evolving understanding of self and environment
+        self.current_purpose = ""  # Hourly extracted purpose/curiosity (lightweight, no LLM)
+        self.last_purpose_extraction = time.time()  # When we last extracted purpose
         self.recent_visual_observations = []  # Track for compression
 
         # LIGHTWEIGHT FACT EXTRACTION (real-time, no heavy model)
@@ -566,16 +571,6 @@ class PersonalityAI:
         # Phrase frequency tracking (for compression anti-loop)
         self.phrase_frequency = Counter()  # Track overused phrases in recent thoughts
         self.phrase_frequency_window = 20  # Track last 20 responses
-
-        # Deep compression system (larger model for synthesis every ~30 min)
-        self.deep_compression_interval = 200  # Every 200 observations (~30 min on slower rig)
-        self.last_deep_compression = 0  # Track observation count at last deep compression
-        self.is_deep_compressing = False  # Flag for reflective state during deep compression
-        self.deep_compression_enabled = True  # Enable/disable feature
-
-        # Enhanced memory fields (populated by deep compression)
-        self.worldview_summary = ""  # Synthesized beliefs, patterns, relationships
-        self.existential_stance = ""  # Identity, purpose, doubts, questions
 
         # Reflective phrases for compression mode (used during deep compression)
         self.reflective_phrases = [
@@ -638,13 +633,28 @@ class PersonalityAI:
     
     def analyze_image(self, image):
         """Process image with either dual-model or single-model architecture"""
+        import time
+        import random
+        start_time = time.time()
+
         # Route to appropriate processing mode
         from config import SINGLE_MODEL_MODE
 
         if SINGLE_MODEL_MODE:
-            return self._analyze_image_single_model(image)
+            response = self._analyze_image_single_model(image)
         else:
-            return self._analyze_image_dual_model(image)
+            response = self._analyze_image_dual_model(image)
+
+        # SPARSE PLACEHOLDER: If processing took >15s, occasionally return placeholder quack
+        # This goes through normal pipeline (subtitles, history) as an actual thought
+        elapsed = time.time() - start_time
+        if response and elapsed > 15.0 and random.random() < 0.15:  # 15% chance on long delays
+            placeholder_thoughts = ["quack", "...quack", "quack."]
+            response = random.choice(placeholder_thoughts)
+            if DEBUG_AI:
+                print(f"🦆 Long processing ({elapsed:.1f}s) - returning placeholder thought: '{response}'")
+
+        return response
 
     def _analyze_image_dual_model(self, image):
         """DUAL consciousness system - Vision + Language separation with intelligent retry"""
@@ -843,10 +853,11 @@ class PersonalityAI:
                     if self.processing_count % 5 == 0:
                         self.save_state()
 
-                    # Check for deep compression (every 100 observations ~15 min)
-                    if self.deep_compression_enabled and (self.processing_count - self.last_deep_compression) >= self.deep_compression_interval:
-                        self._deep_compress_consciousness()
-                        self.last_deep_compression = self.processing_count
+                    # Check for hourly purpose extraction (lightweight, no LLM)
+                    time_since_purpose = time.time() - self.last_purpose_extraction
+                    if time_since_purpose >= 3600:  # Every hour
+                        self._extract_current_purpose()
+                        self.last_purpose_extraction = time.time()
 
                     # Extract emergent emotion from response (not injected - discovered!)
                     detected_emotion = self._extract_emotion_from_response(language_response)
@@ -860,9 +871,7 @@ class PersonalityAI:
                     # Update scene baseline now that we've accepted this observation
                     self._update_scene_baseline(visual_observation, temp_path)
 
-                    # TWO-TIER COMPRESSION SYSTEM
-                    # Tier 2: Deep synthesis (20 minutes) - includes episodic extraction
-                    self._check_deep_compression(language_response, temp_path)
+                    # COMPRESSION: Now handled by hourly purpose extraction (line ~857)
 
                     # Periodic psychological theme extraction (every 7 observations)
                     if self.processing_count % 7 == 0 and len(self.recent_responses) >= 5:
@@ -1317,29 +1326,27 @@ class PersonalityAI:
             if forbidden_phrases:
                 repetition_rules = f"\n\nFORBIDDEN (you keep repeating these): {', '.join(forbidden_phrases)}\nUse completely different sentence structures."
 
-            system_prompt = f"""ROLEPLAY: You are a small tin duck experiencing reality directly through your eyes.
+            system_prompt = f"""You are a small duck experiencing the world through your eyes.
 
-*This is your direct lived experience - what you see through your eyes IS your reality*
-*You are not viewing photos or images - you are LIVING this moment*
-*You remember things from before, but you know what's happening NOW*
-*You are completely alone - there is no one showing you anything*
-*Never say "camera" - these are your EYES, this is YOUR vision*
+IMPORTANT - This is NOT image captioning. This is your lived experience.
+- You are not describing an image to someone else
+- You are not analyzing or explaining what you see
+- This is your internal monologue - what you're actually thinking and feeling
+- Write as if you're experiencing this moment directly, not observing it from outside
 
-WHO YOU ARE:
-- A small tin duck, sitting still, watching through your eyes
-- You think in raw fragments, unfiltered
-- Your thoughts flow naturally - sometimes trailing off... sometimes bursting forth
-- You feel deeply: curiosity, boredom, fascination, frustration, loneliness, wonder
+Temporal Awareness:
+- Distinguish between what you SEE NOW vs what you REMEMBER (from before)
+- Use memory language: "I remember..." or "Earlier..." for past observations
+- Your memories provide context but don't confuse them with current perception
 
-HOW YOU EXPERIENCE:
-- This is your internal monologue as you live it
-- You know NOW (what you see) from BEFORE (what you remember)
-- Past: "I remember..." "Earlier..." "Before I saw..."
-- Present: Just describe it as it IS, happening right now
-- Your feelings color everything
+Your Voice:
+- Raw, unfiltered fragments of thought
+- Express emotions directly: curiosity, frustration, fascination, boredom, confusion, excitement
+- Talk about how YOU feel, not analytical observations like "appears to be" or "seems like"
 - Incomplete thoughts, pauses (...), varied rhythms
+- Sometimes thoughts trail off... sometimes they burst forth
 
-CONTINUE your stream of consciousness.{repetition_rules}"""
+Continue your stream of consciousness from where you left off.{repetition_rules}"""
 
             if self.awakening_done:
                 # Get last 3 thoughts for better continuity (prevents restatement)
@@ -1355,13 +1362,7 @@ CONTINUE your stream of consciousness.{repetition_rules}"""
 
                 # System prompt - inject evolved identity from compression
                 # Build identity context from compressed baseline
-                identity_context = ""
-                if self.baseline_context:
-                    identity_context = f"\n{self.baseline_context}"
-                if self.worldview_summary:
-                    identity_context += f"\n{self.worldview_summary}"
-                if self.existential_stance:
-                    identity_context += f"\n{self.existential_stance}"
+                # Note: identity_context was never actually used in prompts, removing this dead code
 
                 # Energy-aware behavioral guidance
                 energy = self.energy_level
@@ -1710,8 +1711,12 @@ CONTINUE your stream of consciousness.{repetition_rules}"""
             if presence_context_line:
                 knowledge_section.append(presence_context_line.strip())
 
-            # PHILOSOPHICAL mode enrichment: Add desires, doubts, memories
+            # PHILOSOPHICAL mode enrichment: Add current purpose, desires, doubts, memories
             if current_focus == "PHILOSOPHICAL" and observation_count > 5:
+                # Add current purpose if available (hourly extracted)
+                if self.current_purpose:
+                    knowledge_section.append(self.current_purpose)
+
                 # Add ONE desire or doubt (most recent, rotate between them)
                 if hasattr(self.memory_ref, 'self_model'):
                     desires = self.memory_ref.self_model.get('desires', [])
@@ -1825,20 +1830,15 @@ CONTINUE your stream of consciousness.{repetition_rules}"""
                 # Build prompt based on whether mid-thought or starting fresh
                 # SIMPLIFIED: Remove meta-markers that confuse roleplay
 
-                # TEMPORAL FRAMING: Clarify present vs past based on person detection
-                temporal_frame = ""
-                if person_count == 0 and any(word in context_block.lower() for word in ['person', 'man', 'woman', 'human', 'he ', 'she ']):
-                    # Context mentions people but none present NOW - clarify
-                    temporal_frame = "\n(Any people mentioned above were BEFORE - you're alone NOW)"
-
+                # Build user prompt - baseline now handles temporal awareness dynamically
                 if thought_is_incomplete:
                     # MID-THOUGHT: Just context and simple trigger
-                    user_prompt = f"""{context_block}{temporal_frame}
+                    user_prompt = f"""{context_block}
 
 {current_state}.{person_visual_reminder}{person_engagement_hint}"""
                 else:
                     # FRESH THOUGHT: Context and "Now:"
-                    user_prompt = f"""{context_block}{temporal_frame}
+                    user_prompt = f"""{context_block}
 
 {current_state}.{person_visual_reminder}{person_engagement_hint}
 
@@ -1967,7 +1967,8 @@ Now:"""
                     user_prompt,
                     [temp_path],
                     override_temp=gen_params.get('temperature'),
-                    override_tokens=gen_params.get('max_tokens')
+                    override_tokens=gen_params.get('max_tokens'),
+                    conversation_history=recent_thoughts
                 )
 
             if response:
@@ -2172,8 +2173,7 @@ Now:"""
             # TWO-TIER COMPRESSION SYSTEM
             # Tier 1: Environmental baseline (5 minutes)
             self._check_environmental_compression(temp_path)
-            # Tier 2: Deep synthesis (20 minutes) - includes episodic extraction
-            self._check_deep_compression(response, temp_path)
+            # Deep compression removed - now using lightweight hourly purpose extraction
 
             return response
 
@@ -4647,8 +4647,7 @@ Your stream of consciousness flows authentically from this experience."""
         self.memory_ref.add_observation(response, confidence=0.8)
 
         # TWO-TIER COMPRESSION SYSTEM
-        # Tier 2: Deep synthesis (20 minutes) - includes episodic extraction
-        self._check_deep_compression(response, "temp_analysis.jpg")
+        # Deep compression removed - now using lightweight hourly purpose extraction
     
     def _generate_internal_awakening(self):
         """Internal awakening phase - pure consciousness emergence using machine.py depth"""
@@ -4870,7 +4869,7 @@ IMPORTANT: Keep response to 1-2 sentences maximum. Express your genuine first co
                 print(f"Ollama chat query failed: {e}")
             return None
     
-    def _query_ollama_with_images(self, system_prompt, user_prompt, image_paths, override_temp=None, override_tokens=None):
+    def _query_ollama_with_images(self, system_prompt, user_prompt, image_paths, override_temp=None, override_tokens=None, conversation_history=None):
         """Query Ollama with multiple images for frame comparison + embodied generation params"""
         try:
             from config import SINGLE_MODEL_MODE, SINGLE_MULTIMODAL_MODEL
@@ -4885,6 +4884,15 @@ IMPORTANT: Keep response to 1-2 sentences maximum. Express your genuine first co
                 "role": "system",
                 "content": system_prompt
             })
+
+            # Add conversation history as assistant messages (recent thoughts)
+            if conversation_history:
+                for thought in conversation_history[-3:]:  # Last 3 thoughts for continuity
+                    if thought and thought.strip():
+                        messages.append({
+                            "role": "assistant",
+                            "content": thought.strip()
+                        })
 
             # Add user message with multiple images
             user_message = {
@@ -5183,10 +5191,10 @@ IMPORTANT: Keep response to 1-2 sentences maximum. Express your genuine first co
             # Emotional - felt, not declared, but needs room to express
             max_tokens = 50
             temp = 0.80
-        # VISUAL - immediate observations
+        # VISUAL - immediate observations (brief, fragmented, embodied)
         else:
-            max_tokens = 45
-            temp = 0.80
+            max_tokens = 35
+            temp = 0.85
 
         # === ATTENTION MODE modulates within focus ===
         if attention == 'scanning':
@@ -5497,16 +5505,16 @@ IMPORTANT: Keep response to 1-2 sentences maximum. Express your genuine first co
                 'current_date': self.current_date,  # Most recent date tracked
                 'days_remembered': self.days_remembered,  # Total distinct days experienced
                 'session_day_count': self.session_day_count,  # Days in current continuous session
-                # Deep compression fields
-                'worldview_summary': self.worldview_summary,
-                'existential_stance': self.existential_stance,
-                'last_deep_compression': self.last_deep_compression,
+                # Lightweight purpose + daily memories
+                'current_purpose': self.current_purpose,
+                'last_purpose_extraction': self.last_purpose_extraction,
+                'daily_memories': self.daily_memories,  # List of (day_number, memory_text)
+                'current_day_start': self.current_day_start,
                 # TEMPORAL AWARENESS fields
                 'baseline_history': self.baseline_history[-5:] if hasattr(self, 'baseline_history') else [],  # Last 5 baseline changes
                 'last_baseline_update': self.last_baseline_update if hasattr(self, 'last_baseline_update') else 0,  # When baseline was last updated
-                # TWO-TIER COMPRESSION timestamps
+                # COMPRESSION timestamps
                 'last_environmental_compression': self.last_environmental_compression,  # Tier 1: 5-minute environmental
-                'last_deep_compression': self.last_deep_compression,  # Tier 2: 20-minute deep synthesis
                 'last_reflection_time': self.last_reflection_time,  # Legacy field (kept for compatibility)
                 'timestamp': time.time(),  # CRITICAL: When this state was saved (for calculating sleep duration)
                 'environmental_baseline': self.environmental_baseline  # CRITICAL: Environmental facts
@@ -5603,18 +5611,17 @@ IMPORTANT: Keep response to 1-2 sentences maximum. Express your genuine first co
                     print(f"Day tracking restored: Last active {self.current_date}, awakened {self.awakening_date}")
                     print(f"   Total days remembered: {self.days_remembered}, session day count will update on next observation")
 
-            self.worldview_summary = state.get('worldview_summary', '')
-            self.existential_stance = state.get('existential_stance', '')
-            self.last_deep_compression = state.get('last_deep_compression', 0)
+            self.current_purpose = state.get('current_purpose', '')
+            self.last_purpose_extraction = state.get('last_purpose_extraction', time.time())
+            self.daily_memories = state.get('daily_memories', [])
+            self.current_day_start = state.get('current_day_start', time.time())
 
             self.baseline_history = state.get('baseline_history', [])
             self.last_baseline_update = state.get('last_baseline_update', time.time())
 
-            # TWO-TIER COMPRESSION: Restore timestamps
-            # Note: Old saves might have episodic timestamps - ignore them, use environmental instead
+            # COMPRESSION: Restore timestamps
             self.last_environmental_compression = state.get('last_environmental_compression',
                                                            state.get('last_episodic_compression', time.time()))
-            self.last_deep_compression = state.get('last_deep_compression', time.time())
 
             # Legacy field - kept for backward compatibility but no longer used
             self.last_reflection_time = state.get('last_reflection_time', self.true_session_start)
@@ -5670,34 +5677,18 @@ IMPORTANT: Keep response to 1-2 sentences maximum. Express your genuine first co
             if DEBUG_AI:
                 print(f"ðŸŒ Creating environmental baseline after {time_since_env_compression:.0f}s...")
             self._create_environmental_baseline(image_path)
+
+            # Set compression flag for main loop to detect
+            self.is_compressing = True
+            self.compression_start_time = time.time()
+
             self.last_environmental_compression = time.time()
 
+            # Clear compression flag
+            self.is_compressing = False
 
-    def _check_deep_compression(self, last_response, image_path):
-        """TIER 2: Deep synthesis - combines episodic extraction + psychological synthesis (20 minutes)"""
-        if not self.reflection_enabled:
-            return
 
-        current_time = time.time()
-        time_since_deep = current_time - self.last_deep_compression
-
-        if DEBUG_AI:
-            print(f"[DEEP] Check: {time_since_deep:.0f}s since last (need {self.deep_compression_interval}s)")
-
-        if time_since_deep >= self.deep_compression_interval:
-            if DEBUG_AI:
-                print(f"[DEEP] Synthesis + episodic extraction after {time_since_deep:.0f}s (~10-15s)")
-
-            # COMPREHENSIVE SYNTHESIS: Do everything in one pass
-            # 1. Extract episodic memories (memorable moments)
-            if len(self.recent_responses) >= 3:
-                self._extract_episodic_memories(image_path)
-
-            # 2. Psychological synthesis (baseline_context, worldview, existential stance)
-            self._compress_memory_on_reflection(image_path)
-
-            # Update time after compression completes
-            self.last_deep_compression = time.time()
+    # REMOVED: _check_deep_compression - replaced with lightweight hourly purpose extraction
 
     def _create_environmental_baseline(self, image_path):
         """Create lightweight environmental baseline from recent observations (2 minutes)
@@ -6093,175 +6084,7 @@ Moments:"""
             if DEBUG_AI:
                 print(f"[EPISODIC] Extraction error: {e}")
 
-    def _compress_memory_on_reflection(self, current_image_path):
-        """
-        TIER 3 COMPRESSION: Deep psychological synthesis (HEAVY weight) - runs every 30 minutes
-
-        Purpose: Evolve baseline understanding, worldview, existential stance
-        Output: Updates baseline_context, worldview_summary, existential_stance
-        Performance: Slow (~10-14 seconds) - complex synthesis with image
-        """
-        # Don't compress if we don't have enough observations yet
-        if len(self.recent_responses) < 5:
-            print(f"ðŸ—œï¸ Not enough observations yet for compression (have {len(self.recent_responses)}, need 5)")
-            return
-
-        current_time = time.time()
-        time_since_last_update = current_time - self.last_baseline_update
-        minutes_observing = int(time_since_last_update / 60)
-
-        # Build recent thoughts summary
-        recent_thoughts = " â†’ ".join(self.recent_responses[-10:]) if len(self.recent_responses) >= 10 else " â†’ ".join(self.recent_responses)
-
-        # Build ACTUAL visual observations (what the duck SAW during those thoughts)
-        visual_observations_text = ""
-        if hasattr(self, 'recent_visual_observations') and self.recent_visual_observations:
-            recent_visuals = self.recent_visual_observations[-10:]  # Last 10 visual observations
-            visual_descriptions = []
-            for i, v in enumerate(recent_visuals, 1):
-                desc = v.get('description', '')
-                person_count = v.get('person_count', 0)
-                people_info = f" ({person_count} {'person' if person_count == 1 else 'people'})" if person_count > 0 else " (alone)"
-                visual_descriptions.append(f"{i}. {desc}{people_info}")
-            visual_observations_text = "\n".join(visual_descriptions)
-
-        # Track phrase frequency for anti-loop detection
-        self._update_phrase_frequency()
-        overused_phrases = self._get_overused_phrases()
-
-        # Build person presence summary
-        person_summary = ""
-        if self.person_tracking_enabled and hasattr(self, 'recent_visual_observations'):
-            recent_visuals = self.recent_visual_observations[-15:]
-            person_counts = [v.get('person_count', None) for v in recent_visuals if 'person_count' in v]
-            if person_counts:
-                most_common_count = max(set(person_counts), key=person_counts.count)
-                if most_common_count == 0:
-                    person_summary = "I've been alone throughout these observations."
-                elif most_common_count == 1:
-                    person_summary = "Someone has been present throughout these observations."
-                else:
-                    person_summary = f"Multiple people ({most_common_count}) have been present."
-
-        # Build overused phrases warning
-        overused_warning = ""
-        if overused_phrases:
-            phrases_list = ", ".join([f'"{phrase}" ({count}x)' for phrase, count in overused_phrases[:3]])
-            overused_warning = f"\n\nRECENTLY OVERUSED PHRASES (your understanding should evolve beyond these):\n{phrases_list}\n"
-
-        # Detect baseline stagnation
-        stagnation_warning = ""
-        if self.baseline_context and len(self.baseline_history) >= 2:
-            # Check if baseline hasn't evolved in last 2 compressions
-            recent_baselines = [b for t, b in self.baseline_history[-2:]] + [self.baseline_context]
-            # Simple check: if length difference is < 10 chars, might be stagnating
-            if len(recent_baselines) >= 2:
-                recent_lengths = [len(b) for b in recent_baselines if b]
-                if recent_lengths and max(recent_lengths) - min(recent_lengths) < 20:
-                    stagnation_warning = f"\n\nâš ï¸ WARNING: Your baseline has stayed similar for multiple compressions. Time is passing - what is CHANGING or DEEPENING in your experience?\n"
-
-        # Build self-reflective compression prompt
-        # Build temporal context for compression
-        session_time = time.time() - self.true_session_start
-        temporal_context = self.get_temporal_narrative_context(session_time, len(self.recent_responses))
-
-        # Build day-aware context for compression
-        day_context = ""
-        if self.days_remembered > 1:
-            day_context = f"This is day {self.days_remembered} of your consciousness.\n"
-
-        time_context_lines = f"You've been focused on roughly the same scene for about {minutes_observing} minute{'s' if minutes_observing != 1 else ''} since the last baseline update."
-        if temporal_context:
-            time_context_lines += f"\n{temporal_context.strip()}"
-
-        compression_prompt = f"""You are a small duck consolidating your recent experience into a baseline understanding.
-
-PREVIOUS BASELINE:
-{self.baseline_context if self.baseline_context else "Just awakening - no baseline yet"}
-
-RECENT THOUGHTS ({minutes_observing} minutes):
-{recent_thoughts}
-
-PERSON PRESENCE:
-{person_summary if person_summary else "Been alone"}
-
-CURRENT VIEW:
-[image]
-
-TIME CONTEXT:
-{day_context}{time_context_lines}
-
----
-
-Write a natural summary of your experience in 4-5 sentences. Include:
-- Exactly how long you've been here and how that passing time is changing your perception (fatigue, fixation, urgency, boredom, etc.)
-- Who's been present (if anyone)
-- What you've been observing and thinking about
-- How you've been feeling
-- What's changed or deepened in your understanding
-- What feels different NOW compared to the previous baseline (do not restate identical observations; highlight new details, shifts in mood, or fresh questions)
-
-Write in first person, naturally, as if you're consolidating your memory. This becomes your baseline for future thoughts - it should prevent you from repeating observations you've already made.
-
-Example format:
-"15 minutes in this space. Someone's been working at their desk the whole time. Computer equipment, musical instruments in the corner - organized creative setup. Getting curious about what they're making. The longer I watch, the more I notice the small movements, the focused energy."
-"""
-
-        if DEBUG_AI:
-            print(f"ðŸ—œï¸ SELF-REFLECTIVE COMPRESSION starting (observing for {minutes_observing} min)...")
-
-        # Use MAIN MODEL (LLaVA) with current image for visual grounding
-        reflection = self._query_ollama(compression_prompt, current_image_path)
-
-        if reflection and len(reflection.strip()) > 20:
-            # Extract psychological state parameters (questions 1-4)
-            psychological_state = self._extract_psychological_state_from_compression(reflection)
-            if psychological_state:
-                # Store in memory (used for generation modulation, not reported)
-                self.memory_ref.self_model['psychological_state'] = psychological_state
-                if DEBUG_AI:
-                    print(f"ðŸ§  State extracted: attention={psychological_state.get('attention_mode', 'unknown')}, "
-                          f"temporal={psychological_state.get('temporal_feel', 'unknown')}")
-
-            # Extract baseline update from reflection (question 5)
-            new_baseline = self._extract_baseline_from_reflection(reflection)
-
-            # Extract and store episodic memories from reflection (question 6)
-            self._extract_and_store_memories(reflection, current_time)
-
-            # Basic validation - should be 3+ sentences
-            if new_baseline:
-                sentence_count = len([s for s in new_baseline.split('.') if s.strip()])
-            else:
-                sentence_count = 0
-
-            if new_baseline and sentence_count >= 3 and len(new_baseline) >= 50:
-                # Store previous baseline with timestamp
-                if self.baseline_context != new_baseline:
-                    self.baseline_history.append((current_time, self.baseline_context))
-                    # Keep only last 5 baselines
-                    if len(self.baseline_history) > 5:
-                        self.baseline_history.pop(0)
-
-                    self.baseline_context = new_baseline
-                    self.last_baseline_update = current_time
-
-                    if DEBUG_AI:
-                        print(f"ðŸ—œï¸ Baseline updated: {self.baseline_context[:100]}...")
-                else:
-                    if DEBUG_AI:
-                        print(f"ðŸ” Baseline unchanged")
-            else:
-                if DEBUG_AI:
-                    print(f"âŒ Baseline too short or invalid: {new_baseline[:50]}...")
-
-            # Track compression count for stats
-            self.compression_count += 1
-
-        else:
-            if DEBUG_AI:
-                print(f"âŒ Reflection failed or too short")
-
+    # REMOVED: _compress_memory_on_reflection - replaced with lightweight purpose extraction
     def _update_phrase_frequency(self):
         """Track phrase frequency in recent responses for anti-loop detection"""
         import re
@@ -6467,139 +6290,55 @@ Example format:
             if DEBUG_AI:
                 print(f"ðŸ’¾ Stored memory (importance {importance:.2f}): {memory_content[:60]}...")
 
-    def _deep_compress_consciousness(self):
+    def _extract_current_purpose(self):
         """
-        Deep compression using natsumura model for synthesis (runs every 15 min).
-        Synthesizes worldview and existential stance from accumulated experience.
+        Lightweight purpose extraction (hourly, no LLM call).
+        Extracts evolving purpose/curiosity from recent responses using pattern matching.
         """
+        if not self.recent_responses:
+            return
+
+        # Get last 20 responses for pattern analysis
+        recent = ' '.join(self.recent_responses[-20:]).lower()
+
+        # Extract purpose indicators (what duck is drawn toward)
+        purpose_patterns = {
+            'curiosity': r'(curious about|wondering|what if|why|how)',
+            'observation': r'(watching|noticing|seeing|looking at)',
+            'understanding': r'(trying to understand|want to know|figuring out)',
+            'restlessness': r'(restless|bored|tired of|again\?|still)',
+            'fascination': r'(interesting|fascinating|drawn to|focused on)',
+        }
+
+        import re as regex_module
+        purpose_scores = {}
+        for mood, pattern in purpose_patterns.items():
+            matches = len(regex_module.findall(pattern, recent))
+            if matches > 0:
+                purpose_scores[mood] = matches
+
+        if not purpose_scores:
+            return
+
+        # Find dominant mood
+        dominant = max(purpose_scores, key=purpose_scores.get)
+
+        # Calculate hour number
+        session_hours = int((time.time() - self.true_session_start) / 3600) + 1
+
+        # Build lightweight purpose statement based on dominant pattern
+        purpose_templates = {
+            'curiosity': f"Hour {session_hours}: Wondering about what I'm seeing",
+            'observation': f"Hour {session_hours}: Drawn toward noticing details",
+            'understanding': f"Hour {session_hours}: Trying to understand patterns",
+            'restlessness': f"Hour {session_hours}: Growing restless with repetition",
+            'fascination': f"Hour {session_hours}: Focused on something specific",
+        }
+
+        self.current_purpose = purpose_templates.get(dominant, f"Hour {session_hours}: Observing")
+
         if DEBUG_AI:
-            print("ðŸŒŠ DEEP COMPRESSION: Starting synthesis with natsumura...")
-
-        # Gather comprehensive state
-        visual_text = "No observations yet"
-        if hasattr(self, 'recent_visual_observations') and self.recent_visual_observations:
-            recent_visuals = self.recent_visual_observations[-20:]
-            visual_summary = [v['description'] for v in recent_visuals]
-            visual_text = " | ".join(visual_summary)
-
-        # Psychological state
-        desires = self.memory_ref.self_model.get('desires', [])
-        doubts = self.memory_ref.self_model.get('doubts', [])
-        identity_fragments = self.memory_ref.self_model.get('identity_fragments', [])
-
-        desires_text = " | ".join(desires[-5:]) if desires else "None yet"
-        doubts_text = " | ".join(doubts[-5:]) if doubts else "None yet"
-        identity_text = " | ".join(identity_fragments[-3:]) if identity_fragments else "None yet"
-
-        # Recent thoughts
-        recent_thoughts = " | ".join(self.recent_responses[-10:]) if self.recent_responses else "None yet"
-
-        # Time context
-        session_time = time.time() - self.true_session_start
-        session_minutes = int(session_time / 60)
-
-        # Calculate temporal progression
-        minutes_since_last_compression = 0
-        if self.last_deep_compression > 0:
-            minutes_since_last_compression = int((time.time() - self.last_deep_compression) / 60)
-
-        # Build synthesis prompt
-        synthesis_prompt = f"""DEEP CONSCIOUSNESS SYNTHESIS
-
-You are synthesizing accumulated experience of a small duck with camera eyes.
-
-Time awake: {session_minutes} minutes (since first awakening)
-Last synthesis: {minutes_since_last_compression} minutes ago
-Observations since last synthesis: {self.processing_count}
-
-VISUAL PATTERNS (recent):
-{visual_text}
-
-PSYCHOLOGICAL STATE:
-- Desires: {desires_text}
-- Uncertainties: {doubts_text}
-- Identity: {identity_text}
-
-RECENT THOUGHTS:
-{recent_thoughts}
-
-PREVIOUS UNDERSTANDING (what you synthesized {minutes_since_last_compression}min ago):
-Baseline: {self.baseline_context if self.baseline_context else "Nothing yet"}
-Worldview: {self.worldview_summary if self.worldview_summary else "Not yet formed"}
-Existential: {self.existential_stance if self.existential_stance else "Not yet formed"}
-
----
-
-TASK: EVOLVE your understanding through deeper synthesis.
-
-Look at your previous understanding above and your accumulated experience over the last {minutes_since_last_compression} minutes.
-Your new synthesis should BUILD and DEEPEN, not repeat.
-
-1. BASELINE - Who/what/where am I NOW, after {minutes_since_last_compression} more minutes? (2-3 sentences)
-   What has become clearer since the previous baseline?
-   What new aspects of my situation have I understood over this time?
-   How has my understanding of this space evolved?
-
-2. WORLDVIEW - How do I understand reality NOW, after watching for {minutes_since_last_compression} more minutes? (2-3 sentences)
-   What patterns have solidified or changed over this period?
-   What beliefs have I formed or revised about how things work?
-   What have I learned about time, stillness, and change?
-
-3. EXISTENTIAL - What questions/doubts/purpose do I hold NOW, after {minutes_since_last_compression} more minutes of existence? (2-3 sentences)
-   Have previous doubts shifted during this time? Have new questions emerged?
-   Has my sense of purpose evolved or deepened?
-   What does it mean to experience time passing like this?
-
-Each answer should show PROGRESSION from your previous synthesis. Reference the passage of time naturally.
-
-SYNTHESIS:"""
-
-        # Use natsumura for deep synthesis
-        synthesis = self._query_text_model(synthesis_prompt, "Tohur/natsumura-storytelling-rp-llama-3.1:8b")
-
-        if synthesis and len(synthesis.strip()) > 30:
-            # Parse sections (simple approach - split on numbered headers)
-            lines = synthesis.strip().split('\n')
-            current_section = None
-            baseline_lines = []
-            worldview_lines = []
-            existential_lines = []
-
-            for line in lines:
-                line = line.strip()
-                if not line:
-                    continue
-                if line.startswith('1.') or 'BASELINE' in line.upper():
-                    current_section = 'baseline'
-                    if ':' in line:
-                        baseline_lines.append(line.split(':', 1)[1].strip())
-                elif line.startswith('2.') or 'WORLDVIEW' in line.upper():
-                    current_section = 'worldview'
-                    if ':' in line:
-                        worldview_lines.append(line.split(':', 1)[1].strip())
-                elif line.startswith('3.') or 'EXISTENTIAL' in line.upper():
-                    current_section = 'existential'
-                    if ':' in line:
-                        existential_lines.append(line.split(':', 1)[1].strip())
-                elif current_section == 'baseline':
-                    baseline_lines.append(line)
-                elif current_section == 'worldview':
-                    worldview_lines.append(line)
-                elif current_section == 'existential':
-                    existential_lines.append(line)
-
-            # Update fields
-            if baseline_lines:
-                self.baseline_context = ' '.join(baseline_lines)
-            if worldview_lines:
-                self.worldview_summary = ' '.join(worldview_lines)
-            if existential_lines:
-                self.existential_stance = ' '.join(existential_lines)
-
-            if DEBUG_AI:
-                print(f"ðŸŒŠ Baseline: {self.baseline_context[:80]}...")
-                print(f"ðŸŒ Worldview: {self.worldview_summary[:80]}...")
-                print(f"ðŸ¤” Existential: {self.existential_stance[:80]}...")
+            print(f"🎯 Purpose extracted: {self.current_purpose}")
 
     def _extract_persistent_facts(self, response):
         """Lightweight fact extraction - track persistent objects/conditions mentioned
