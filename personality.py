@@ -1693,7 +1693,8 @@ Continue your stream of consciousness from where you left off.{repetition_rules}
                 # TEMPORAL AWARENESS: Check if baseline mentions people but they're gone
                 baseline_mentions_person = any(word in env_clean.lower() for word in
                     ['person', 'people', 'someone', 'visitor', 'human', 'man', 'woman', 'he ', 'she '])
-                current_person_count = person_count if person_count is not None else 0
+                # Get person count from person_data (available in both awakening and normal modes)
+                current_person_count = person_data.get('count', 0) if person_data else 0
 
                 # Add temporal framing if baseline is old (> 2 minutes)
                 baseline_age_minutes = 0
