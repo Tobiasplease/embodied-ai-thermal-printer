@@ -1690,12 +1690,24 @@ Continue your stream of consciousness from where you left off.{repetition_rules}
                 env_clean = env_context.strip()
                 env_clean = re.sub(r'^(the image shows|this image shows)\s*', '', env_clean, flags=re.IGNORECASE)
 
+                # TEMPORAL AWARENESS: Check if baseline mentions people but they're gone
+                baseline_mentions_person = any(word in env_clean.lower() for word in
+                    ['person', 'people', 'someone', 'visitor', 'human', 'man', 'woman', 'he ', 'she '])
+                current_person_count = person_count if person_count is not None else 0
+
                 # Add temporal framing if baseline is old (> 2 minutes)
                 baseline_age_minutes = 0
                 if hasattr(self, 'environmental_baseline_created_at') and self.environmental_baseline_created_at:
                     baseline_age_minutes = int((time.time() - self.environmental_baseline_created_at) / 60)
 
-                if baseline_age_minutes > 2:
+                # TEMPORAL FRAMING: Handle person presence/absence changes
+                if baseline_mentions_person and current_person_count == 0:
+                    # Baseline mentions people but they're gone - add temporal context
+                    if baseline_age_minutes < 5:
+                        env_clean = f"What you observed {baseline_age_minutes}min ago: {env_clean}\nChange since then: The person/people left"
+                    else:
+                        env_clean = f"Earlier memory ({baseline_age_minutes}min ago): {env_clean}\nNow: They've left - space is empty"
+                elif baseline_age_minutes > 2:
                     # Been here a while - frame as "established" to prevent redescription
                     if baseline_age_minutes < 5:
                         env_clean = f"{env_clean} [just established]"
