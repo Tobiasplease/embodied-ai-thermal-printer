@@ -1690,32 +1690,74 @@ Continue your stream of consciousness from where you left off.{repetition_rules}
                 env_clean = env_context.strip()
                 env_clean = re.sub(r'^(the image shows|this image shows)\s*', '', env_clean, flags=re.IGNORECASE)
 
-                # TEMPORAL AWARENESS: Check if baseline mentions people but they're gone
+                # TEMPORAL AWARENESS STATE MACHINE: Track person presence changes
                 baseline_mentions_person = any(word in env_clean.lower() for word in
                     ['person', 'people', 'someone', 'visitor', 'human', 'man', 'woman', 'he ', 'she '])
-                # Get person count from person_data (available in both awakening and normal modes)
+
+                # Estimate how many people baseline described
+                baseline_person_count = 0
+                env_lower = env_clean.lower()
+                if 'two people' in env_lower or 'both' in env_lower or 'pair' in env_lower:
+                    baseline_person_count = 2
+                elif 'three people' in env_lower or 'several' in env_lower or 'multiple' in env_lower:
+                    baseline_person_count = 3
+                elif baseline_mentions_person:
+                    baseline_person_count = 1
+
+                # Get current person count from person_data (available in both awakening and normal modes)
                 current_person_count = person_data.get('count', 0) if person_data else 0
 
-                # Add temporal framing if baseline is old (> 2 minutes)
+                # Calculate baseline age for temporal framing
                 baseline_age_minutes = 0
                 if hasattr(self, 'environmental_baseline_created_at') and self.environmental_baseline_created_at:
                     baseline_age_minutes = int((time.time() - self.environmental_baseline_created_at) / 60)
 
-                # TEMPORAL FRAMING: Handle person presence/absence changes
-                if baseline_mentions_person and current_person_count == 0:
-                    # Baseline mentions people but they're gone - emphasize current aloneness
+                # TEMPORAL FRAMING STATE MACHINE: Rich person presence awareness
+                if current_person_count == 0 and baseline_mentions_person:
+                    # STATE: DEPARTED - People left, now alone
                     if baseline_age_minutes < 5:
                         env_clean = f"What you saw {baseline_age_minutes}min ago: {env_clean}\nNOW: You are alone. They left."
                     else:
                         env_clean = f"Earlier memory ({baseline_age_minutes}min ago): {env_clean}\nNOW: You're alone - no one here anymore."
+
+                elif current_person_count > 0 and not baseline_mentions_person:
+                    # STATE: NEW ARRIVAL - Someone arrived (baseline was empty)
+                    if current_person_count == 1:
+                        env_clean = f"{env_clean}\nNOW: Someone just arrived."
+                    else:
+                        env_clean = f"{env_clean}\nNOW: {current_person_count} people just arrived."
+
+                elif current_person_count > 0 and baseline_mentions_person and current_person_count == baseline_person_count:
+                    # STATE: STILL PRESENT - Same people still here
+                    if current_person_count == 1:
+                        env_clean = f"{env_clean}\nStill here - watching you."
+                    else:
+                        env_clean = f"{env_clean}\nAll {current_person_count} still here."
+
+                elif current_person_count > baseline_person_count and baseline_person_count > 0:
+                    # STATE: MORE ARRIVED - Additional people joined
+                    new_count = current_person_count - baseline_person_count
+                    if new_count == 1:
+                        env_clean = f"Earlier: {env_clean}\nNOW: Someone else arrived (now {current_person_count} total)."
+                    else:
+                        env_clean = f"Earlier: {env_clean}\nNOW: {new_count} more arrived (now {current_person_count} total)."
+
+                elif current_person_count < baseline_person_count and current_person_count > 0:
+                    # STATE: SOME LEFT - Fewer people now
+                    left_count = baseline_person_count - current_person_count
+                    if current_person_count == 1:
+                        env_clean = f"Earlier: {env_clean}\nNOW: Only one person remaining."
+                    else:
+                        env_clean = f"Earlier: {env_clean}\nNOW: {left_count} left - {current_person_count} remaining."
+
                 elif baseline_age_minutes > 2:
-                    # Been here a while - frame as "established" to prevent redescription
+                    # STATE: NO CHANGE - Normal aging markers (no person presence changes)
                     if baseline_age_minutes < 5:
                         env_clean = f"{env_clean} [just established]"
                     elif baseline_age_minutes < 15:
                         env_clean = f"{env_clean} [established {baseline_age_minutes}min ago]"
                     else:
-                        # Very old baseline - emphasize "still here"
+                        # Very old baseline - emphasize duration
                         env_clean = f"Still in the same space. {env_clean} [established {baseline_age_minutes}min ago]"
 
                 knowledge_section.append(env_clean)
