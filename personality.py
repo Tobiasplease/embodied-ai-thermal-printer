@@ -3224,7 +3224,8 @@ Now:"""
         if memory_hint:
             memory_clause = f"Memory flashes: {memory_hint}."
         else:
-            memory_clause = "Memory flashes: vague tools and warm light."
+            # No memory - acknowledge the void honestly
+            memory_clause = "Can't remember what came before."
         last_thought_line = f'"{last_thought}"' if last_thought else "some unfinished thought"
 
         return f"""You are a small duck waking up again.
@@ -4643,22 +4644,19 @@ Your stream of consciousness flows authentically from this experience."""
         thought_lower = thought.lower()
         
         # Identify core perceptual/emotional themes for natural continuation
+        # Removed specific assigned verbiage - let model discover its own language
         if any(word in thought_lower for word in ['focus', 'concentration', 'engaged', 'immersed']):
-            return "this sense of focused engagement"
-        elif any(word in thought_lower for word in ['comfortable', 'cozy', 'warm', 'peaceful']):
-            return "this feeling of comfort and warmth"
+            return "this focused state"
         elif any(word in thought_lower for word in ['space', 'room', 'environment', 'surroundings']):
-            return "this awareness of the surrounding space"
+            return "this space"
         elif any(word in thought_lower for word in ['listening', 'music', 'audio', 'sound']):
-            return "this connection to auditory experience"
-        elif any(word in thought_lower for word in ['personal', 'intimate', 'private', 'lived-in']):
-            return "this sense of personal intimacy"
+            return "this sound"
         elif any(word in thought_lower for word in ['light', 'lighting', 'bright', 'dim']):
-            return "this quality of light and illumination"
+            return "this light"
         elif any(word in thought_lower for word in ['objects', 'items', 'things', 'belongings']):
-            return "this awareness of surrounding objects"
+            return "these things"
         else:
-            return "this particular feeling"
+            return "this feeling"
     
     def _describe_current_emotional_state_for_interpretation(self, valence, arousal, clarity):
         """Describe emotional state for consciousness interpretation context"""
