@@ -1846,9 +1846,17 @@ class EmbodiedAI:
                 self.hand_control.cleanup()
                 print("[BOT] Hand control cleaned up")
 
+            if self.subtitle_projector:
+                try:
+                    if hasattr(self.subtitle_projector, 'process') and self.subtitle_projector.process:
+                        self.subtitle_projector.process.terminate()
+                        print("[PROJECT] Subtitle projector stopped")
+                except Exception as e:
+                    print(f"[WARN] Projector stop error: {e}")
+
             # Camera handled directly in main loop
             print("[CAMERA] Camera cleanup handled in main loop")
-            
+
             print("[OK] Shutdown complete")
             
         except Exception as e:
