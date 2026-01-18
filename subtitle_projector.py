@@ -211,7 +211,7 @@ class SubtitleProjector:
 
             # Initialize pygame mixer
             log(f"[AUDIO] Initializing pygame mixer...")
-            pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=512)
+            pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=2048)
             log(f"[AUDIO] Mixer initialized: {pygame.mixer.get_init()}")
 
             log(f"[AUDIO] Loading audio file...")

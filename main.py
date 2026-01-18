@@ -16,6 +16,7 @@ import cv2
 import time
 import signal
 import sys
+import os
 import io
 import traceback
 import threading
@@ -454,13 +455,25 @@ class EmbodiedAI:
             actual_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
             actual_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
             print(f"[OK] Camera {CAMERA_INDEX} initialized: {actual_width}x{actual_height}")
-            
+
+            # Hide camera preview in exhibition mode (projector is the only display)
+            exhibition_mode = os.environ.get('EXHIBITION_MODE') == '1'
+            show_preview = SHOW_CAMERA_PREVIEW and not exhibition_mode
+
+            if show_preview:
+                cv2.namedWindow("[BOT] AI Inner Monologue", cv2.WINDOW_NORMAL)
+                cv2.resizeWindow("[BOT] AI Inner Monologue", PREVIEW_WIDTH, PREVIEW_HEIGHT)
+                print("[OK] Camera preview window created")
+            else:
+                if exhibition_mode:
+                    print("[EXHIBITION] Camera preview hidden (projector only)")
+
             # Let camera stabilize before first AI processing (exposure/focus adjustment)
             print("[HOT] Camera warming up (2 seconds)...")
             warmup_start = time.time()
             while time.time() - warmup_start < 2.0:
                 ret, frame = cap.read()  # Keep reading frames during warmup
-                if ret and SHOW_CAMERA_PREVIEW:
+                if ret and show_preview:
                     display_frame = cv2.resize(frame, (PREVIEW_WIDTH, PREVIEW_HEIGHT))
                     cv2.imshow("[BOT] AI Inner Monologue", display_frame)
                     cv2.waitKey(1)
@@ -600,7 +613,7 @@ class EmbodiedAI:
                     # Removed spammy AI processing messages
                 
                 # === DISPLAY OVERLAYS === (EXACT machine.py pattern)
-                if SHOW_CAMERA_PREVIEW:
+                if show_preview:
                     # Resize frame for preview (matching machine.py)
                     # Use INTER_NEAREST for faster resizing (less quality but much faster)
                     display_frame = cv2.resize(frame, (PREVIEW_WIDTH, PREVIEW_HEIGHT), interpolation=cv2.INTER_NEAREST)
@@ -1867,10 +1880,13 @@ def main():
     """Main entry point"""
     print("[BOT] Embodied AI v2 - Starting...")
     print(f"[LIST] Config: AI interval={AI_PROCESS_INTERVAL}s, Camera={CAMERA_WIDTH}x{CAMERA_HEIGHT}")
-    
+
     # Create and run system
     ai_system = EmbodiedAI()
     ai_system.run()
+
+    # Explicit exit with code 0 to signal clean shutdown to launcher
+    sys.exit(0)
 
 
 if __name__ == "__main__":

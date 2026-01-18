@@ -19,6 +19,9 @@ $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 # Change to that directory
 Set-Location $scriptDir
 
+# Set exhibition mode for fullscreen projector
+$env:EXHIBITION_MODE = "1"
+
 # Launch Python with the launcher
 & ".venv\Scripts\python.exe" "launcher.py"
 

@@ -662,9 +662,11 @@ class PersonalityAI:
             # UPDATE DAY AWARENESS: Track calendar dates and day count
             self._update_day_awareness()
 
-            # Save image temporarily
+            # Save image temporarily (resize for faster vision processing)
             temp_path = "temp_analysis.jpg"
-            cv2.imwrite(temp_path, image)
+            # Resize to 512x384 (6x fewer pixels = 50-70% faster vision model)
+            resized = cv2.resize(image, (512, 384), interpolation=cv2.INTER_AREA)
+            cv2.imwrite(temp_path, resized, [cv2.IMWRITE_JPEG_QUALITY, 85])
 
             # PERSON TRACKING: Extract person-level narrative data
             person_data = None
@@ -1046,9 +1048,11 @@ class PersonalityAI:
             # UPDATE DAY AWARENESS: Track calendar dates and day count
             self._update_day_awareness()
 
-            # Save image temporarily
+            # Save image temporarily (resize for faster vision processing)
             temp_path = "temp_analysis.jpg"
-            cv2.imwrite(temp_path, image)
+            # Resize to 512x384 (6x fewer pixels = 50-70% faster vision model)
+            resized = cv2.resize(image, (512, 384), interpolation=cv2.INTER_AREA)
+            cv2.imwrite(temp_path, resized, [cv2.IMWRITE_JPEG_QUALITY, 85])
 
             # PERSON TRACKING: Extract person-level narrative data
             person_data = None
@@ -2678,12 +2682,12 @@ Now:"""
                 'philosophize', 'ruminate', 'introspect', 'analyze', 'reason'
             ],
             'wistful': [
-                'wish', 'warmth', 'softly', 'gently', 'quietly', 'moment',
+                'wish', 'softly', 'gently', 'quietly', 'moment',
                 'tender', 'delicate', 'subtle', 'whisper', 'murmur', 'faint',
                 'fleeting', 'fragile', 'precious', 'bittersweet', 'poignant'
             ],
             'content': [
-                'comfortable', 'cozy', 'nice', 'good', 'pleasant', 'satisfied',
+                'nice', 'good', 'pleasant', 'satisfied',
                 'happy', 'pleased', 'fulfil', 'gratified', 'at ease', 'serene',
                 'blessed', 'fortunate', 'appreciate', 'enjoy', 'savor'
             ],

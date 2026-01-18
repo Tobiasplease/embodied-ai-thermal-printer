@@ -119,7 +119,7 @@ LIPSYNC_BAUD = 9600  # Serial baud rate
 
 # Lightbulb Settings (synchronized with TTS audio/jaw movement)
 LIGHTBULB_ENABLED = True  # Enable lightbulb that fluctuates with speech
-LIGHTBULB_PORT = "COM22"  # Separate Arduino for lightbulb control
+LIGHTBULB_PORT = "COM4"  # Separate Arduino for lightbulb control
 LIGHTBULB_BAUD = 9600  # Serial baud rate
 
 # Camera Preview Settings
