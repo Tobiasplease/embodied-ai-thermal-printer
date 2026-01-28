@@ -164,7 +164,7 @@ class DirectAudioLipSync:
 
         # Direct rate limiting - smooth movement by controlling speed, not blending
         # This ensures we always reach target position (no asymptotic approach)
-        MAX_CHANGE_PER_FRAME = 12  # degrees - smooth and gentle on hardware
+        MAX_CHANGE_PER_FRAME = 10  # degrees - optimized for longevity and hardware protection
 
         angle_delta = target_angle - self.last_angle
 
