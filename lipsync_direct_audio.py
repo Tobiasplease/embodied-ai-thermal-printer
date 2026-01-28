@@ -56,9 +56,9 @@ class DirectAudioLipSync:
         self.SILENCE_THRESHOLD = 20   # Very low = opens on even quiet sounds
         self.MAX_AMPLITUDE = 250      # Lower = reaches full open more easily (adjusted for typical amplitude 30-50)
 
-        # Smoothing (higher = smoother, 0.0-1.0) - reduced for faster response
+        # Smoothing (higher = smoother, 0.0-1.0) - balanced for visibility and hardware longevity
         self.last_angle = self.JAW_CLOSED
-        self.smoothing_factor = 0.5  # Reduced from 0.75 for quicker movement
+        self.smoothing_factor = 0.65  # Gentler to reduce servo stress during rapid speech
 
         # Keep-alive for rapid speech (prevents closing too fast)
         self.last_open_time = 0
@@ -165,7 +165,7 @@ class DirectAudioLipSync:
         # Simplified smoothing - balanced for clear syllables
         if target_angle > self.last_angle:
             # Opening: moderate smoothing for clear but smooth opening
-            dynamic_smoothing = self.smoothing_factor * 0.5
+            dynamic_smoothing = self.smoothing_factor * 0.6  # Slightly gentler opening
         else:
             # Closing: more smoothing to avoid jitter
             dynamic_smoothing = self.smoothing_factor * 1.0
