@@ -464,16 +464,19 @@ class FocusEngine:
 
         # Check if current focus is exhausted - THIS TAKES PRIORITY
         exhaustion_score = self.calculate_exhaustion_score(self.current_focus, repetition_detected)
-        is_exhausted = exhaustion_score >= 0.7  # Match is_focus_exhausted threshold
+        # Lower threshold when repetition detected to break loops faster
+        exhaustion_threshold = 0.55 if repetition_detected else 0.7
+        is_exhausted = exhaustion_score >= exhaustion_threshold
 
         if is_exhausted:
             # Mark this focus as recently exhausted (cooldown period)
             self.recently_exhausted[self.current_focus] = current_time
-            print(f"🚫 {self.current_focus} exhausted - entering cooldown (60s)")
+            reason = "repetition loop" if repetition_detected else "exhausted"
+            print(f"🚫 {self.current_focus} {reason} (score={exhaustion_score:.2f} >= {exhaustion_threshold}) - entering cooldown (60s)")
 
             # Current focus exhausted - rotate to least recently used focus
             # Even if there's a person event, we need to break out of VISUAL loops
-            return self._rotate_to_fresh_focus(state_analysis, f"exhausted (score={exhaustion_score:.2f})")
+            return self._rotate_to_fresh_focus(state_analysis, f"{reason} (score={exhaustion_score:.2f})")
 
         # === HIGH PRIORITY INTERRUPTS (only if not exhausted) ===
 
