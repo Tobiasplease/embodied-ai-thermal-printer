@@ -64,6 +64,10 @@ class DirectAudioLipSync:
         self.last_open_time = 0
         self.keep_open_duration = 0.05  # Stay open for 50ms after sound
 
+        # Minimum visible opening (helps short utterances be visible)
+        self.USE_MIN_OPENING = True  # Set to False to disable
+        self.MIN_VISIBLE_OPEN = 40  # Jump to at least this angle when sound detected
+
         # Playback timing (for subtitle sync)
         self.playback_start_time = None
         self.current_playback_time = 0.0
@@ -161,6 +165,12 @@ class DirectAudioLipSync:
 
             # Calculate target angle
             target_angle = self.JAW_CLOSED + (normalized * (self.JAW_OPEN - self.JAW_CLOSED))
+
+        # Minimum visible opening boost (helps short utterances be visible)
+        if self.USE_MIN_OPENING and amplitude >= self.SILENCE_THRESHOLD:
+            # If sound detected and currently closed/nearly closed, jump to minimum visible position
+            if self.last_angle < self.MIN_VISIBLE_OPEN:
+                target_angle = max(target_angle, self.MIN_VISIBLE_OPEN)
 
         # Direct rate limiting - smooth movement by controlling speed, not blending
         # This ensures we always reach target position (no asymptotic approach)
