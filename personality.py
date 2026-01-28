@@ -481,6 +481,9 @@ class PersonalityAI:
         
         # Intelligent Focus System
         self.consecutive_visual_focus = 0
+
+        # Vision failure tracking for text-only fallback
+        self.consecutive_vision_failures = 0
         self.last_stasis_override = None
         try:
             from focus_system import FocusEngine
@@ -1947,6 +1950,7 @@ Now:"""
 
             use_text_only = (
                 not self.awakening_done or  # ALWAYS use text-only for awakening (no vision during awakening)
+                self.consecutive_vision_failures >= 5 or  # Vision unavailable - fallback to text
                 (
                     ((static_duration > 15 and current_focus in ["MEMORY", "PHILOSOPHICAL", "EMOTIONAL"]) or
                      (loop_detected_var and current_focus in ["MEMORY", "PHILOSOPHICAL", "EMOTIONAL"]) or
@@ -1979,6 +1983,15 @@ Now:"""
                 # Build existential prompts based on temporal state
                 # Present facts, let natsumura interpret the experience naturally
                 embodied_reminder = visual_memory  # Start with visual memory
+
+                # Add person presence context if vision failed but people are present
+                person_presence_reminder = ""
+                if self.consecutive_vision_failures >= 5 and person_count > 0:
+                    if person_count == 1:
+                        person_presence_reminder = "\n(Someone is present, though details are unclear)"
+                    else:
+                        person_presence_reminder = f"\n({person_count} people are present, though details are unclear)"
+                embodied_reminder += person_presence_reminder
 
                 # Helper to format duration naturally (nested function)
                 def format_duration_local(minutes):
@@ -2031,6 +2044,9 @@ Now:"""
                 )
 
             if response:
+                # Vision succeeded - reset failure counter
+                self.consecutive_vision_failures = 0
+
                 # Filter out meta/AI-mode responses and image-captioning language
                 lower_response = response.lower()
 
@@ -5034,11 +5050,17 @@ IMPORTANT: Keep response to 1-2 sentences maximum. Express your genuine first co
             else:
                 if DEBUG_AI:
                     print(f"Vision query failed: {response.status_code}")
+                self.consecutive_vision_failures += 1
+                if self.consecutive_vision_failures >= 5 and DEBUG_AI:
+                    print(f"⚠️ Vision failures: {self.consecutive_vision_failures} - will fallback to text-only")
                 return None  # Return None so retry logic can handle it
 
         except Exception as e:
             if DEBUG_AI:
                 print(f"Vision query error: {e}")
+            self.consecutive_vision_failures += 1
+            if self.consecutive_vision_failures >= 5 and DEBUG_AI:
+                print(f"⚠️ Vision failures: {self.consecutive_vision_failures} - will fallback to text-only")
             return None  # Return None so retry logic can handle it
     
     def _update_mood_from_response(self, response):
