@@ -576,30 +576,16 @@ class EmbodiedAI:
                 # Calculate dynamic interval based on scene activity
                 self.current_ai_interval = self._calculate_dynamic_interval()
 
-                # IMMEDIATE AI trigger on major events (bypass interval)
-                # Person events OR major visual activity (lights turning on, movement, etc)
-                has_person_event = len(person_events) > 0
-
-                # Use activity score for reactivity (frame-based, immediate)
-                # High activity (>80) = major scene change happening NOW
-                has_high_activity = (activity_result is not None and
-                                    activity_result.get('activity_score', 0) > 80.0)
-
-                force_ai_now = has_person_event or has_high_activity
-
                 # AI processing in SEPARATE THREAD with dynamic interval
-                should_process_ai = (current_time - self.last_ai_process_time >= self.current_ai_interval) or force_ai_now
+                # Always respect interval - person/activity data available when AI runs on schedule
+                # Urgent reactions (presets) still fire immediately via urgent_reaction_queue
+                should_process_ai = (current_time - self.last_ai_process_time >= self.current_ai_interval)
 
                 if should_process_ai:
                     # Only start new AI thread if previous one is complete
                     if self.ai_processing_lock.acquire(blocking=False):  # Non-blocking acquire
                         if DEBUG_AI:
-                            if has_person_event:
-                                print(f"[URGENT] PERSON EVENT - forcing immediate AI at frame {self.frame_count}")
-                            elif has_high_activity:
-                                print(f"[URGENT] HIGH ACTIVITY (score: {activity_result.get('activity_score', 0):.0f}) - forcing immediate AI at frame {self.frame_count}")
-                            else:
-                                print(f"[AI] Starting AI thread at frame {self.frame_count}")
+                            print(f"[AI] Starting AI thread at frame {self.frame_count}")
 
                         # Start daemon thread for AI processing (machine.py pattern)
                         # Pass person_events for context-aware instant captions
@@ -818,19 +804,47 @@ class EmbodiedAI:
             # Processing done - placeholder thread will naturally exit
 
             # Check if response is stale (person arrived while we were processing)
+            stale_interrupted = False
             if person_just_greeted or (self.person_arrival_timestamp > 0 and ai_start_time < self.person_arrival_timestamp):
                 if DEBUG_AI:
-                    print(f"[STALE] Discarding response - person arrived during processing, re-processing...")
-                # Skip this response and immediately reprocess with person context
+                    print(f"[STALE] Discarding response - person arrived during processing")
+                # Skip this response - person data will be current when AI runs on next interval
                 response = None
-                # Force immediate reprocessing
-                self.last_ai_process_time = 0
+                stale_interrupted = True
+                # Respect normal interval instead of forcing immediate retry
 
-            if DEBUG_AI:
-                if response:
-                    print(f"[BOT] AI processing complete - got response")
+            # Handle silence with contextual preset phrases
+            if not response:
+                import random
+
+                # CASE 1: Interrupted by person state change
+                # Note: person_just_greeted means urgent reaction already queued (e.g., "Hello")
+                # So stay silent here - the greeting already handles the interruption
+                if stale_interrupted:
+                    if DEBUG_AI:
+                        print(f"[STALE] Staying silent - urgent greeting already queued")
+                    response = None
+
+                # CASE 2: Long processing time (>10s) - vision model struggling
+                elif (time.time() - ai_start_time) > 10.0:
+                    thinking_phrases = [
+                        "...",
+                        "huh",
+                        "still watching",
+                        "trying to focus"
+                    ]
+                    response = random.choice(thinking_phrases)
+                    if DEBUG_AI:
+                        print(f"[TIMEOUT] Long processing ({time.time() - ai_start_time:.0f}s) - using thinking phrase: {response}")
+
+                # CASE 3: Other silence (AI chose silence, filtering, etc.) - stay silent
                 else:
-                    print(f"[STOP] AI choosing silence - no response")
+                    if DEBUG_AI:
+                        print(f"[STOP] AI choosing silence - no response")
+                    response = None
+
+            if DEBUG_AI and response:
+                print(f"[BOT] AI processing complete - got response")
 
             if response:
                 if DEBUG_AI:

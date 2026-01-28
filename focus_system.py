@@ -641,6 +641,9 @@ class FocusEngine:
                 return 0.5  # Moderate novelty - confirmed real movement
             elif is_real_movement and activity_score > 30:
                 return 0.4  # Low-moderate novelty
+            elif activity_score < 10:
+                # Truly static - no novelty (fixes ping-pong bug)
+                return 0.1  # Very low novelty - static empty room
 
         # === FALLBACK: Text-based novelty for static scenes ===
         if len(recent_observations) < 2:
