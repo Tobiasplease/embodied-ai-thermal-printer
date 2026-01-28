@@ -173,7 +173,7 @@ class DirectAudioLipSync:
         smoothed = (dynamic_smoothing * target_angle) + ((1 - dynamic_smoothing) * self.last_angle)
 
         # Limit maximum change per frame to reduce servo stress (prevents current spikes)
-        MAX_CHANGE_PER_FRAME = 10  # degrees - still responsive but gentler on hardware
+        MAX_CHANGE_PER_FRAME = 15  # degrees - balanced for responsiveness and hardware protection
         angle_delta = smoothed - self.last_angle
         if abs(angle_delta) > MAX_CHANGE_PER_FRAME:
             smoothed = self.last_angle + (MAX_CHANGE_PER_FRAME if angle_delta > 0 else -MAX_CHANGE_PER_FRAME)
