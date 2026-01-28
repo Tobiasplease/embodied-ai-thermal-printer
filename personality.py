@@ -5707,8 +5707,7 @@ IMPORTANT: Keep response to 1-2 sentences maximum. Express your genuine first co
 
             if DEBUG_AI:
                 env_time = time.time() - self.last_environmental_compression
-                deep_time = time.time() - self.last_deep_compression
-                print(f"Compression timers: Environmental {env_time:.0f}s ago (5min), Deep {deep_time:.0f}s ago (20min)")
+                print(f"Compression timers: Environmental {env_time:.0f}s ago")
 
             if DEBUG_AI:
                 print(f"Advanced personality state loaded: {len(self.memory_ref.observations)} observations, {len(self.memory_ref.beliefs)} beliefs, awakening_done={self.awakening_done}")
