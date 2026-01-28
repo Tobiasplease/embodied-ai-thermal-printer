@@ -162,25 +162,23 @@ class DirectAudioLipSync:
             # Calculate target angle
             target_angle = self.JAW_CLOSED + (normalized * (self.JAW_OPEN - self.JAW_CLOSED))
 
-        # Simplified smoothing - balanced for clear syllables
-        if target_angle > self.last_angle:
-            # Opening: moderate smoothing for clear but smooth opening
-            dynamic_smoothing = self.smoothing_factor * 0.5
-        else:
-            # Closing: more smoothing to avoid jitter
-            dynamic_smoothing = self.smoothing_factor * 1.0
+        # Direct rate limiting - smooth movement by controlling speed, not blending
+        # This ensures we always reach target position (no asymptotic approach)
+        MAX_CHANGE_PER_FRAME = 20  # degrees - smooth but responsive
 
-        smoothed = (dynamic_smoothing * target_angle) + ((1 - dynamic_smoothing) * self.last_angle)
+        angle_delta = target_angle - self.last_angle
 
-        # Limit maximum change per frame to reduce servo stress (prevents current spikes)
-        MAX_CHANGE_PER_FRAME = 25  # degrees - allows full opening while still protecting hardware
-        angle_delta = smoothed - self.last_angle
+        # Limit the change to max speed
         if abs(angle_delta) > MAX_CHANGE_PER_FRAME:
-            smoothed = self.last_angle + (MAX_CHANGE_PER_FRAME if angle_delta > 0 else -MAX_CHANGE_PER_FRAME)
+            # Move toward target at maximum speed
+            new_angle = self.last_angle + (MAX_CHANGE_PER_FRAME if angle_delta > 0 else -MAX_CHANGE_PER_FRAME)
+        else:
+            # Small movement - just go to target directly
+            new_angle = target_angle
 
-        self.last_angle = smoothed
+        self.last_angle = new_angle
 
-        return int(smoothed)
+        return int(new_angle)
 
     def play_with_lipsync(self, wav_path: str, on_start_callback=None, on_end_callback=None):
         """
