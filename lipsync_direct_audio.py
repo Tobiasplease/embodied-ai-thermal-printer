@@ -50,7 +50,7 @@ class DirectAudioLipSync:
 
         # Servo positions
         self.JAW_CLOSED = 20
-        self.JAW_OPEN = 70
+        self.JAW_OPEN = 65  # Reduced from 70 to ease servo strain (less heat/wear)
 
         # Audio thresholds (lower = more sensitive, adjusted for better responsiveness)
         self.SILENCE_THRESHOLD = 20   # Very low = opens on even quiet sounds

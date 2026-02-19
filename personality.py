@@ -1333,13 +1333,14 @@ class PersonalityAI:
             if forbidden_phrases:
                 repetition_rules = f"\n\nFORBIDDEN (you keep repeating these): {', '.join(forbidden_phrases)}\nUse completely different sentence structures."
 
-            system_prompt = f"""You are a small duck experiencing the world through your eyes.
+            system_prompt = f"""You are a small duck. The image you receive is what you see through your eyes right now - your actual view of the world.
 
-IMPORTANT - This is NOT image captioning. This is your lived experience.
-- You are not describing an image to someone else
-- You are not analyzing or explaining what you see
-- This is your internal monologue - what you're actually thinking and feeling
-- Write as if you're experiencing this moment directly, not observing it from outside
+ROLEPLAY DIRECTIVE - Respond as the duck having this experience:
+- You are the duck, looking at this scene directly
+- This is what you see in front of you, not a photograph you're analyzing
+- Think and speak as yourself: "I see...", "Where am I?", "Cold metal..."
+- NEVER use phrases like "an image of", "the scene shows", "this appears to be", "the photo depicts"
+- This is your internal monologue - raw thoughts and feelings, not descriptions
 
 Temporal Awareness:
 - Distinguish between what you SEE NOW vs what you REMEMBER (from before)
@@ -1950,7 +1951,7 @@ Now:"""
 
             use_text_only = (
                 not self.awakening_done or  # ALWAYS use text-only for awakening (no vision during awakening)
-                self.consecutive_vision_failures >= 5 or  # Vision unavailable - fallback to text
+                self.consecutive_vision_failures >= 2 or  # Vision unavailable - fallback to text (reduced from 5 for faster failover)
                 (
                     ((static_duration > 15 and current_focus in ["MEMORY", "PHILOSOPHICAL", "EMOTIONAL"]) or
                      (loop_detected_var and current_focus in ["MEMORY", "PHILOSOPHICAL", "EMOTIONAL"]) or
@@ -1986,7 +1987,7 @@ Now:"""
 
                 # Add person presence context if vision failed but people are present
                 person_presence_reminder = ""
-                if self.consecutive_vision_failures >= 5 and person_count > 0:
+                if self.consecutive_vision_failures >= 2 and person_count > 0:
                     if person_count == 1:
                         person_presence_reminder = "\n(Someone is present, though details are unclear)"
                     else:
@@ -5041,7 +5042,7 @@ IMPORTANT: Keep response to 1-2 sentences maximum. Express your genuine first co
             if DEBUG_AI:
                 img_count = len(image_paths)
                 print(f"Querying Ollama with {img_count} {'image' if img_count == 1 else 'images'}")
-            
+
             response = requests.post(url, json=payload, timeout=120)
             
             if response.status_code == 200:
@@ -5049,9 +5050,14 @@ IMPORTANT: Keep response to 1-2 sentences maximum. Express your genuine first co
                 return result.get('message', {}).get('content', '').strip()
             else:
                 if DEBUG_AI:
-                    print(f"Vision query failed: {response.status_code}")
+                    # Try to get error details from response
+                    try:
+                        error_detail = response.json().get('error', 'Unknown error')
+                        print(f"Vision query failed: {response.status_code} - {error_detail}")
+                    except:
+                        print(f"Vision query failed: {response.status_code}")
                 self.consecutive_vision_failures += 1
-                if self.consecutive_vision_failures >= 5 and DEBUG_AI:
+                if self.consecutive_vision_failures >= 2 and DEBUG_AI:
                     print(f"⚠️ Vision failures: {self.consecutive_vision_failures} - will fallback to text-only")
                 return None  # Return None so retry logic can handle it
 
@@ -5059,7 +5065,7 @@ IMPORTANT: Keep response to 1-2 sentences maximum. Express your genuine first co
             if DEBUG_AI:
                 print(f"Vision query error: {e}")
             self.consecutive_vision_failures += 1
-            if self.consecutive_vision_failures >= 5 and DEBUG_AI:
+            if self.consecutive_vision_failures >= 2 and DEBUG_AI:
                 print(f"⚠️ Vision failures: {self.consecutive_vision_failures} - will fallback to text-only")
             return None  # Return None so retry logic can handle it
     
