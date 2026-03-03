@@ -655,7 +655,7 @@ class PersonalityAI:
             placeholder_thoughts = ["quack", "...quack", "quack."]
             response = random.choice(placeholder_thoughts)
             if DEBUG_AI:
-                print(f"🦆 Long processing ({elapsed:.1f}s) - returning placeholder thought: '{response}'")
+                print(f"Long processing ({elapsed:.1f}s) - returning placeholder thought: '{response}'")
 
         return response
 
@@ -984,7 +984,7 @@ class PersonalityAI:
                 scene_changed = change_description in ["major scene shift", "significant change"]
 
                 if DEBUG_AI and change_magnitude > 0.4:
-                    print(f"🔄 Scene change: {change_description} (magnitude: {change_magnitude:.2f})")
+                    print(f"Scene change: {change_description} (magnitude: {change_magnitude:.2f})")
             else:
                 scene_changed = True  # First observation
                 change_magnitude = 0.0  # Don't trigger false reactivity on first frame
@@ -1124,6 +1124,19 @@ class PersonalityAI:
                         self.last_mentioned_people = 0
                         self.person_was_present = True
                         return instant_caption
+
+            # DEPARTURE DETECTION: Handle "now_alone" event immediately to add to recent_thoughts
+            if person_data and 'now_alone' in person_data.get('events', []):
+                instant_caption = self._generate_instant_caption(person_data['events'])
+                if instant_caption:
+                    if DEBUG_AI:
+                        print(f"Departure caption: {instant_caption}")
+                    # Add to recent thoughts so model knows someone just left
+                    if hasattr(self, 'focus_engine'):
+                        self.focus_engine.record_observation(instant_caption, "PHILOSOPHICAL")
+                    self.recent_responses.append(instant_caption)
+                    self.person_was_present = False
+                    return instant_caption
 
             if DEBUG_AI:
                 print(f"ðŸ§  SINGLE MODEL: Processing with {SINGLE_MULTIMODAL_MODEL}")
@@ -1333,7 +1346,20 @@ class PersonalityAI:
             if forbidden_phrases:
                 repetition_rules = f"\n\nFORBIDDEN (you keep repeating these): {', '.join(forbidden_phrases)}\nUse completely different sentence structures."
 
-            system_prompt = f"""You are a small duck. The image you receive is what you see through your eyes right now - your actual view of the world.
+            # Calculate spatial duration for embodiment in system prompt (use organic day tracking)
+            spatial_context = ""
+            if self.days_remembered > 1:
+                if self.days_remembered < 7:
+                    spatial_context = f" This is day {self.days_remembered} in this space."
+                else:
+                    weeks = self.days_remembered // 7
+                    extra_days = self.days_remembered % 7
+                    if extra_days > 0:
+                        spatial_context = f" You've been here {weeks} weeks and {extra_days} days."
+                    else:
+                        spatial_context = f" You've been here {weeks} weeks."
+
+            system_prompt = f"""You are a small duck.{spatial_context} The image you receive is what you see through your eyes right now - your actual view of the world.
 
 ROLEPLAY DIRECTIVE - Respond as the duck having this experience:
 - You are the duck, looking at this scene directly
@@ -1663,6 +1689,9 @@ Continue your stream of consciousness from where you left off.{repetition_rules}
             # SECTION 1: WHAT YOU KNOW (established facts about your situation)
             knowledge_section = []
 
+            # Get person count for use throughout prompt construction
+            current_person_count = person_data.get('count', 0) if person_data else 0
+
             # Time awareness (how long you've been awake) - make it evocative for long durations
             if session_time_mins < 60:
                 time_aware = f"Awake {session_time_mins}m"
@@ -1673,6 +1702,16 @@ Continue your stream of consciousness from where you left off.{repetition_rules}
             else:  # 3+ hours - emphasize the duration
                 hours = session_time_mins // 60
                 time_aware = f"Been here {hours} hours now"
+
+            # Total time in this space (across all sessions/days)
+            total_time_mins = int((time.time() - self.true_session_start) / 60)
+            if total_time_mins > 1440:  # More than 1 day - add spatial duration context
+                total_days = total_time_mins // 1440
+                if total_days < 7:
+                    time_aware = f"{time_aware} (day {total_days} in this space)"
+                else:
+                    total_weeks = total_days // 7
+                    time_aware = f"{time_aware} (week {total_weeks} in this space)"
 
             knowledge_section.append(time_aware)
 
@@ -1758,13 +1797,35 @@ Continue your stream of consciousness from where you left off.{repetition_rules}
 
                 elif baseline_age_minutes > 2:
                     # STATE: NO CHANGE - Normal aging markers (no person presence changes)
-                    if baseline_age_minutes < 5:
-                        env_clean = f"{env_clean} [just established]"
-                    elif baseline_age_minutes < 15:
-                        env_clean = f"{env_clean} [established {baseline_age_minutes}min ago]"
-                    else:
-                        # Very old baseline - emphasize duration
-                        env_clean = f"Still in the same space. {env_clean} [established {baseline_age_minutes}min ago]"
+                    # Check if this is the same space as the previous baseline (continuous spatial persistence)
+                    continuous_same_space = False
+                    if hasattr(self, 'previous_baseline') and self.previous_baseline and hasattr(self, 'previous_baseline_timestamp') and self.previous_baseline_timestamp:
+                        # Simple keyword overlap check between current and previous baseline
+                        prev_words = set(self.previous_baseline.lower().split())
+                        current_words = set(env_clean.lower().split())
+                        common_words = prev_words & current_words
+                        # Filter out common articles/prepositions
+                        stop_words = {'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'is', 'are', 'was', 'were'}
+                        meaningful_common = common_words - stop_words
+                        overlap_ratio = len(meaningful_common) / max(len(prev_words - stop_words), 1)
+                        continuous_same_space = overlap_ratio > 0.5  # 50%+ overlap = same space
+
+                        if continuous_same_space:
+                            days_in_space = int((time.time() - self.previous_baseline_timestamp) / 86400)
+                            if days_in_space >= 7:
+                                weeks_in_space = days_in_space // 7
+                                env_clean = f"Same space for {weeks_in_space} weeks now. {env_clean}"
+                            elif days_in_space >= 1:
+                                env_clean = f"Same space for {days_in_space} days now. {env_clean}"
+
+                    if not continuous_same_space:
+                        # Regular temporal markers
+                        if baseline_age_minutes < 5:
+                            env_clean = f"{env_clean} [just established]"
+                        elif baseline_age_minutes < 15:
+                            env_clean = f"{env_clean} [established {baseline_age_minutes}min ago]"
+                        else:
+                            env_clean = f"Still in the same space. {env_clean} [established {baseline_age_minutes}min ago]"
 
                 knowledge_section.append(env_clean)
 
@@ -1875,11 +1936,11 @@ Continue your stream of consciousness from where you left off.{repetition_rules}
 
                 # Build current state marker for temporal grounding
                 if person_count == 0:
-                    current_state = "alone"
+                    current_state = "You're alone now"
                 elif person_count == 1:
-                    current_state = "with 1 person"
+                    current_state = "Someone is with you"
                 else:
-                    current_state = f"with {person_count} people"
+                    current_state = f"{person_count} people are with you"
 
                 # Add person engagement hint if someone present for >5 seconds
                 person_engagement_hint = ""
@@ -1961,7 +2022,7 @@ Now:"""
             if use_text_only:
                 # Static scene + non-visual focus = use natsumura (text-only) for internal continuation
                 if DEBUG_AI:
-                    print(f"🔤 Using text-only model (static {static_duration:.0f}s, {current_focus} mode)")
+                    print(f"Using text-only model (static {static_duration:.0f}s, {current_focus} mode)")
 
                 # Add embodied grounding reminder for text-only mode
                 # Natsumura tends to float into creative narrative - anchor it to duck's embodied state
@@ -2030,9 +2091,9 @@ Now:"""
                 # No special "describe what you see" - just continues the thought stream with vision
                 if DEBUG_AI:
                     if strategic_vision_ground:
-                        print(f"👁️ Strategic grounding (obs #{observation_count}, {current_focus} mode)")
+                        print(f"️ Strategic grounding (obs #{observation_count}, {current_focus} mode)")
                     else:
-                        print(f"👁️ Using vision model (movement or VISUAL mode)")
+                        print(f"️ Using vision model (movement or VISUAL mode)")
                 response = self._query_ollama_with_images(
                     system_prompt,
                     user_prompt,
@@ -2104,12 +2165,12 @@ Now:"""
                     # If nothing left, go silent
                     if not cleaned or len(cleaned) < 5:
                         if DEBUG_AI:
-                            print(f"🚫 Nothing left after stripping - going silent")
+                            print(f"Nothing left after stripping - going silent")
                         return None
 
                     response = cleaned
                     if DEBUG_AI:
-                        print(f"✅ Cleaned: {response}")
+                        print(f"Cleaned: {response}")
 
                 response = self._ensure_complete_sentence(response)
                 # Treat pure ellipsis as intentional silence
@@ -3012,25 +3073,13 @@ Now:"""
             return "remembering, connecting"
         
         elif focus_mode == "PHILOSOPHICAL":
-            # Inject DOUBTS and IDENTITY to enrich existential thinking
-            doubts = self.memory_ref.self_model.get('doubts', [])
-            identity_fragments = self.memory_ref.self_model.get('identity_fragments', [])
-
-            if doubts and observation_count > 10:
-                # Use most recent doubt for philosophical inquiry
-                return f"pondering existence (uncertain: {doubts[-1]})"
-            elif identity_fragments and observation_count > 5:
-                # Reference evolving identity
-                return f"wondering about meaning (I am: {identity_fragments[-1]})"
-            elif observation_count > 10:
-                return f"pondering existence ({observation_count} thoughts contemplated)"
+            # Simple focus state - self-model is added separately via motivation_line to avoid duplication
+            if observation_count > 10:
+                return f"pondering existence"
             return "wondering about meaning"
 
         elif focus_mode == "PERSON":
-            # Brief person observation - narrative grounding
-            identity = self.memory_ref.self_model.get('identity_fragments', [])
-            if identity:
-                return f"noticing someone (I am: {identity[-1]})"
+            # Brief person observation - self-model added separately via motivation_line
             return "noticing someone"
 
         return "being present"
@@ -3071,14 +3120,22 @@ Now:"""
         doubts = self.memory_ref.self_model.get('doubts', [])
         identity_fragments = self.memory_ref.self_model.get('identity_fragments', [])
 
-        if desires:
-            parts.append(f"Motivation: drawn toward {desires[-1]}")
-        if doubts:
-            parts.append(f"Concern: {doubts[-1]}")
+        # Only include complete, meaningful identity fragments (>5 words or contains verb/adjective)
+        valid_identity = None
         if identity_fragments:
-            parts.append(f"I am {identity_fragments[-1]}")
+            fragment = identity_fragments[-1].strip()
+            # Skip broken/incomplete fragments like "From" or single words
+            # Must be >1 word AND contain meaningful identity words
+            words = fragment.split()
+            if len(words) > 1 and any(word in fragment.lower() for word in ['am', 'was', 'been', 'becoming', 'like', 'observer', 'explorer', 'feeling', 'sense', 'seem']):
+                valid_identity = fragment
 
-        return " | ".join(parts)
+        if desires:
+            parts.append(f"wanting {desires[-1]}")
+        if valid_identity:
+            parts.append(f"I am {valid_identity}")
+
+        return " / ".join(parts) if parts else ""
 
     def _sanitize_instructional_text(self, text):
         """Remove boilerplate instructional phrasing from stored context."""
@@ -3192,13 +3249,13 @@ Now:"""
             thought = re.sub(r'^The (room|workshop|space|person|artist) (is|are|appears|seems)\s+', '', thought, flags=re.IGNORECASE)
             cleaned_thoughts.append(thought.strip())
 
-        # Format as flowing paragraph, not numbered list - shows continuity
+        # Format as flowing paragraph with TEMPORAL MARKER so model knows these are PAST, not NOW
         if cleaned_thoughts:
-            # Join with "..." to show flow
-            # Add temporal marker to clarify these are PAST thoughts
+            # Join with "..." to show flow of consciousness
+            # CRITICAL: Frame as "recent thoughts" (past) not present-tense to prevent hallucination
             return "(recent thoughts): " + "... ".join(cleaned_thoughts) + " ..."
         else:
-            return "[just beginning]"
+            return "(just awakening)"
 
     def _build_memory_hint_for_awakening(self):
         """Summarize persisted context into a fuzzy, non-literal memory cue."""
@@ -4488,15 +4545,26 @@ Keep it natural and brief."""
                 print(f"[DAY] First awakening on {today} (Day 1)")
             return
 
+        # Always recalculate days_remembered based on calendar days since awakening
+        # (handles cases where duck wasn't running continuously)
+        awakening = datetime.strptime(self.awakening_date, "%Y-%m-%d")
+        current = datetime.strptime(today, "%Y-%m-%d")
+        actual_days = (current - awakening).days + 1  # +1 because awakening day is day 1
+
         # Check if date has changed since last update
         if self.current_date != today:
             # New day!
+            old_date = self.current_date
             self.current_date = today
-            self.days_remembered += 1
+            self.days_remembered = actual_days  # Use calculated value, not increment
             self.session_day_count += 1
 
             if DEBUG_AI:
                 print(f"[DAY] New day detected: {today} (Day {self.days_remembered} total, Day {self.session_day_count} this session)")
+                print(f"[DAY] Calendar calculation: {self.awakening_date} to {today} = {actual_days} days")
+        else:
+            # Same day but update in case awakening_date was corrected
+            self.days_remembered = actual_days
 
         # No change - still same day
 
@@ -5056,7 +5124,7 @@ IMPORTANT: Keep response to 1-2 sentences maximum. Express your genuine first co
                         print(f"Vision query failed: {response.status_code}")
                 self.consecutive_vision_failures += 1
                 if self.consecutive_vision_failures >= 2 and DEBUG_AI:
-                    print(f"⚠️ Vision failures: {self.consecutive_vision_failures} - will fallback to text-only")
+                    print(f"️ Vision failures: {self.consecutive_vision_failures} - will fallback to text-only")
                 return None  # Return None so retry logic can handle it
 
         except Exception as e:
@@ -5064,7 +5132,7 @@ IMPORTANT: Keep response to 1-2 sentences maximum. Express your genuine first co
                 print(f"Vision query error: {e}")
             self.consecutive_vision_failures += 1
             if self.consecutive_vision_failures >= 2 and DEBUG_AI:
-                print(f"⚠️ Vision failures: {self.consecutive_vision_failures} - will fallback to text-only")
+                print(f"️ Vision failures: {self.consecutive_vision_failures} - will fallback to text-only")
             return None  # Return None so retry logic can handle it
     
     def _update_mood_from_response(self, response):
@@ -5501,11 +5569,11 @@ IMPORTANT: Keep response to 1-2 sentences maximum. Express your genuine first co
 
         elif 'now_alone' in events:
             responses = [
-                "They've gone.",
-                "Alone again.",
-                "Mm. Quiet now.",
-                "They left.",
-                "Just me now."
+                "They are gone.",
+                "I am alone again.",
+                "Quiet now. They left.",
+                "They have left.",
+                "Just me now. They went away."
             ]
             import random
             return random.choice(responses)
@@ -5600,7 +5668,9 @@ IMPORTANT: Keep response to 1-2 sentences maximum. Express your genuine first co
                 'last_environmental_compression': self.last_environmental_compression,  # Tier 1: 5-minute environmental
                 'last_reflection_time': self.last_reflection_time,  # Legacy field (kept for compatibility)
                 'timestamp': time.time(),  # CRITICAL: When this state was saved (for calculating sleep duration)
-                'environmental_baseline': self.environmental_baseline  # CRITICAL: Environmental facts
+                'environmental_baseline': self.environmental_baseline,  # CRITICAL: Environmental facts
+                'previous_baseline': getattr(self, 'previous_baseline', ''),  # Previous baseline for continuity detection
+                'previous_baseline_timestamp': getattr(self, 'previous_baseline_timestamp', None)  # When previous baseline was created
             }
 
             import os
@@ -5641,6 +5711,8 @@ IMPORTANT: Keep response to 1-2 sentences maximum. Express your genuine first co
             self.baseline_context = state.get('baseline_context', '')
             self.recent_visual_observations = state.get('recent_visual_observations', [])
             self.environmental_baseline = self._sanitize_instructional_text(state.get('environmental_baseline', ''))
+            self.first_baseline = state.get('first_baseline', '')
+            self.first_baseline_timestamp = state.get('first_baseline_timestamp', None)
 
             self.last_sleep_thought = ''
             saved_responses = state.get('recent_responses', [])
@@ -5728,7 +5800,7 @@ IMPORTANT: Keep response to 1-2 sentences maximum. Express your genuine first co
                 baseline_age_minutes = int((time.time() - self.last_baseline_update) / 60)
                 if baseline_age_minutes > 30:  # Baseline older than 30 minutes
                     if DEBUG_AI:
-                        print(f"⚠️ Clearing stale baseline (age: {baseline_age_minutes}m, sleep: {int(self.sleep_duration/60)}m)")
+                        print(f"️ Clearing stale baseline (age: {baseline_age_minutes}m, sleep: {int(self.sleep_duration/60)}m)")
                     self.environmental_baseline = ""
                     self.baseline_context = ""
                     # Will be recreated with fresh vision on first compression cycle
@@ -5882,9 +5954,15 @@ Compress into spatial memory - what's actually here right now. 2-3 short fragmen
                 print(f'[ENV] After sanitization: {cleaned_baseline[:200] if cleaned_baseline else "(EMPTY - sanitizer stripped everything)"}')
             if not cleaned_baseline:
                 cleaned_baseline = ''
+            # Track previous baseline before updating (for continuous spatial persistence detection)
+            if hasattr(self, 'environmental_baseline') and self.environmental_baseline:
+                self.previous_baseline = self.environmental_baseline
+                self.previous_baseline_timestamp = getattr(self, 'environmental_baseline_created_at', time.time())
+
             # Store as environmental baseline (separate from deep baseline_context)
             self.environmental_baseline = cleaned_baseline
             self.environmental_baseline_created_at = time.time()  # Track when this was established
+
             if DEBUG_AI:
                 print(f'[ENV] Final baseline: {self.environmental_baseline[:80]}...')
 
@@ -5907,7 +5985,7 @@ Compress into spatial memory - what's actually here right now. 2-3 short fragmen
         """
         try:
             if DEBUG_AI:
-                print("🔄 [RECURSIVE] Starting compression cycle...")
+                print("[RECURSIVE] Starting compression cycle...")
 
             # 1. EXTRACT: Get raw observations from recent thoughts
             recent_thoughts = self.recent_responses[-8:] if len(self.recent_responses) >= 8 else self.recent_responses
@@ -5994,17 +6072,17 @@ Keep each under 15 words. Show PROGRESSION from previous cycle - what's evolving
 
             # 7. FEEDBACK: These will influence next observation cycle via _build_motivation_prompt_line()
             if DEBUG_AI:
-                print(f"🔄 [RECURSIVE] Cycle complete:")
+                print(f"[RECURSIVE] Cycle complete:")
                 if parsed.get('patterns'):
-                    print(f"   📊 Patterns: {', '.join(parsed['patterns'][:2])}")
+                    print(f"   Patterns: {', '.join(parsed['patterns'][:2])}")
                 if parsed.get('desires'):
-                    print(f"   💭 Desires: {', '.join(parsed['desires'][:2])}")
+                    print(f"   Desires: {', '.join(parsed['desires'][:2])}")
                 if parsed.get('identity'):
-                    print(f"   🎭 Identity: {parsed['identity'][:50]}...")
+                    print(f"   Identity: {parsed['identity'][:50]}...")
 
         except Exception as e:
             if DEBUG_AI:
-                print(f"🔄 [RECURSIVE] Compression error: {e}")
+                print(f"[RECURSIVE] Compression error: {e}")
 
     def _parse_recursive_compression(self, text):
         """Parse recursive compression response"""
@@ -6420,7 +6498,7 @@ Moments:"""
         self.current_purpose = purpose_templates.get(dominant, f"Hour {session_hours}: Observing")
 
         if DEBUG_AI:
-            print(f"🎯 Purpose extracted: {self.current_purpose}")
+            print(f"Purpose extracted: {self.current_purpose}")
 
     def _extract_persistent_facts(self, response):
         """Lightweight fact extraction - track persistent objects/conditions mentioned

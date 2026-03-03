@@ -87,9 +87,9 @@ class DirectAudioLipSync:
             self.serial_conn = serial.Serial(self.port, self.baud, timeout=1)
             time.sleep(2)
             self._send_command(self.JAW_CLOSED)
-            print(f"✅ Direct audio lip sync connected to {self.port}")
+            print(f"Direct audio lip sync connected to {self.port}")
         except Exception as e:
-            print(f"⚠️ Lip sync disabled: {e}")
+            print(f"️ Lip sync disabled: {e}")
             self.enabled = False
             self.serial_conn = None
 
@@ -99,9 +99,9 @@ class DirectAudioLipSync:
             self.lightbulb_serial = serial.Serial(self.lightbulb_port, self.lightbulb_baud, timeout=1)
             time.sleep(2)
             self._send_lightbulb_command(self.JAW_CLOSED)  # Start dim
-            print(f"✅ Lightbulb sync connected to {self.lightbulb_port}")
+            print(f"Lightbulb sync connected to {self.lightbulb_port}")
         except Exception as e:
-            print(f"⚠️ Lightbulb sync disabled: {e}")
+            print(f"️ Lightbulb sync disabled: {e}")
             self.lightbulb_enabled = False
             self.lightbulb_serial = None
 
@@ -113,7 +113,7 @@ class DirectAudioLipSync:
             angle = max(self.JAW_CLOSED, min(self.JAW_OPEN, int(angle)))
             self.serial_conn.write(f"{angle}\n".encode())
         except Exception as e:
-            print(f"⚠️ Lip sync error: {e}")
+            print(f"️ Lip sync error: {e}")
 
     def _send_lightbulb_command(self, target_angle: int):
         """Send smoothed brightness to lightbulb Arduino (prevents strobing)"""
@@ -132,7 +132,7 @@ class DirectAudioLipSync:
             smoothed_angle = int(self.lightbulb_current_brightness)
             self.lightbulb_serial.write(f"{smoothed_angle}\n".encode())
         except Exception as e:
-            print(f"⚠️ Lightbulb sync error: {e}")
+            print(f"️ Lightbulb sync error: {e}")
 
     def _amplitude_to_angle(self, amplitude: float) -> int:
         """Convert amplitude to jaw angle with minimum visible movement"""
@@ -199,11 +199,11 @@ class DirectAudioLipSync:
             on_start_callback: Called when jaw actually starts moving (audio playing)
             on_end_callback: Called when audio playback finishes
         """
-        print(f"🔊 play_with_lipsync called: {wav_path}, callback={on_start_callback is not None}")
+        print(f"play_with_lipsync called: {wav_path}, callback={on_start_callback is not None}")
         
         # Always play audio, even if serial/jaw control isn't available
         if not Path(wav_path).exists():
-            print(f"❌ WAV file not found: {wav_path}")
+            print(f"WAV file not found: {wav_path}")
             return
 
         self.is_playing = True
@@ -250,7 +250,7 @@ class DirectAudioLipSync:
                 # Fire start callback when ACTUAL SPEECH begins (amplitude above threshold)
                 # This syncs subtitles with when voice actually starts, not just audio file
                 if not callback_fired and amplitude >= self.SILENCE_THRESHOLD and on_start_callback:
-                    print(f"🎤 Speech detected (amplitude: {amplitude:.0f}) - firing callback")
+                    print(f"Speech detected (amplitude: {amplitude:.0f}) - firing callback")
                     try:
                         on_start_callback()
                     except Exception as e:
@@ -280,7 +280,7 @@ class DirectAudioLipSync:
                     print(f"End callback error: {e}")
 
         except Exception as e:
-            print(f"⚠️ Audio playback error: {e}")
+            print(f"️ Audio playback error: {e}")
 
         finally:
             # Close jaw and dim lightbulb
@@ -302,7 +302,7 @@ class DirectAudioLipSync:
             self.lightbulb_serial.close()
 
         self.audio.terminate()
-        print("✅ Direct audio lip sync stopped")
+        print("Direct audio lip sync stopped")
 
 
 if __name__ == "__main__":

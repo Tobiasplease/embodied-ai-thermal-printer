@@ -494,7 +494,7 @@ class EmbodiedAI:
                     self.last_heartbeat = current_time
                     self.frame_counter_for_heartbeat = 0
                     if DEBUG_AI:
-                        print(f"💓 Heartbeat: frame {self.frame_count}, uptime {int(current_time - self.start_time)}s")
+                        print(f"Heartbeat: frame {self.frame_count}, uptime {int(current_time - self.start_time)}s")
 
                 # CHECK FOR LONG COMPRESSION - speak placeholder if compression is taking >10s
                 if (hasattr(self.personality, 'is_compressing') and self.personality.is_compressing and
@@ -535,6 +535,10 @@ class EmbodiedAI:
 
                         # Cache for use on non-tracking frames
                         self.cached_presence_state = presence_state
+
+                        # Update subtitle projector drone volume based on person presence
+                        if self.subtitle_projector and presence_state:
+                            self.subtitle_projector.set_presence_volume(presence_state.person_count)
 
                         # Update personality tracking data for visualization
                         self.personality.last_person_positions = person_data.get('positions', [])

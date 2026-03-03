@@ -48,6 +48,8 @@ class SubtitleProjector:
         # Audio playback
         self.audio_file = audio_file
         self.audio_volume = audio_volume
+        self.base_volume = audio_volume  # Store baseline "alone" volume
+        self.target_volume = audio_volume  # Target volume for smooth transitions
         self.audio_playing = False
 
         # Delay audio initialization until after window is ready
@@ -274,6 +276,53 @@ class SubtitleProjector:
 
         return "break"
 
+    def _set_presence_volume(self, person_count):
+        """Adjust drone volume based on person presence (smooth, subtle increase)"""
+        if not PYGAME_AVAILABLE or not self.audio_file:
+            return
+
+        # Calculate target volume based on person count
+        # Base volume when alone, +10% per person (capped at +30% for 3+ people)
+        if person_count == 0:
+            self.target_volume = self.base_volume
+        elif person_count == 1:
+            self.target_volume = min(1.0, self.base_volume * 1.10)  # +10% for 1 person
+        elif person_count == 2:
+            self.target_volume = min(1.0, self.base_volume * 1.20)  # +20% for 2 people
+        else:
+            self.target_volume = min(1.0, self.base_volume * 1.30)  # +30% for 3+ people
+
+        # Start smooth volume interpolation if not already running
+        if not hasattr(self, '_volume_interpolating'):
+            self._volume_interpolating = True
+            self._interpolate_volume()
+
+    def _interpolate_volume(self):
+        """Smoothly interpolate current volume towards target volume"""
+        if not PYGAME_AVAILABLE or not self.audio_file:
+            return
+
+        try:
+            # Calculate difference
+            diff = self.target_volume - self.audio_volume
+
+            # If close enough, snap to target and stop interpolating
+            if abs(diff) < 0.001:
+                self.audio_volume = self.target_volume
+                pygame.mixer.music.set_volume(self.audio_volume)
+                self._volume_interpolating = False
+                return
+
+            # Smooth interpolation (20% of remaining difference per step)
+            self.audio_volume += diff * 0.2
+            pygame.mixer.music.set_volume(self.audio_volume)
+
+            # Continue interpolating (check every 50ms for smooth transition)
+            self.root.after(50, self._interpolate_volume)
+        except Exception as e:
+            print(f"[AUDIO] Volume interpolation error: {e}")
+            self._volume_interpolating = False
+
     def _update_subtitle(self, text):
         """Update subtitle text (handles both label and canvas modes)"""
         self.current_text = text
@@ -346,6 +395,10 @@ class SubtitleProjector:
                                     self.root.after(0, lambda t=text: self._update_subtitle(t))
                                 elif message.get('action') == 'clear':
                                     self.root.after(0, lambda: self._update_subtitle(''))
+                                elif message.get('action') == 'set_presence_volume':
+                                    # Adjust drone volume based on person presence
+                                    person_count = message.get('person_count', 0)
+                                    self.root.after(0, lambda p=person_count: self._set_presence_volume(p))
                             except json.JSONDecodeError as e:
                                 print(f"JSON decode error: {e}")
                         conn.close()
@@ -460,6 +513,10 @@ class SubtitleProjectorClient:
     def clear(self):
         """Clear subtitle"""
         self._send_command({'action': 'clear'})
+
+    def set_presence_volume(self, person_count):
+        """Adjust drone volume based on person presence"""
+        self._send_command({'action': 'set_presence_volume', 'person_count': person_count})
 
     def __del__(self):
         """Clean up subprocess on exit"""

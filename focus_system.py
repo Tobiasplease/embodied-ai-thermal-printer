@@ -276,7 +276,7 @@ class FocusEngine:
         final_score = min(1.0, score)
 
         # DEBUG: Print exhaustion calculation details
-        print(f"🔍 EXHAUSTION CALC [{focus_mode}]: score={final_score:.2f} | {' | '.join(signals)}")
+        print(f"EXHAUSTION CALC [{focus_mode}]: score={final_score:.2f} | {' | '.join(signals)}")
 
         return final_score
 
@@ -472,7 +472,7 @@ class FocusEngine:
             # Mark this focus as recently exhausted (cooldown period)
             self.recently_exhausted[self.current_focus] = current_time
             reason = "repetition loop" if repetition_detected else "exhausted"
-            print(f"🚫 {self.current_focus} {reason} (score={exhaustion_score:.2f} >= {exhaustion_threshold}) - entering cooldown (60s)")
+            print(f"{self.current_focus} {reason} (score={exhaustion_score:.2f} >= {exhaustion_threshold}) - entering cooldown (60s)")
 
             # Current focus exhausted - rotate to least recently used focus
             # Even if there's a person event, we need to break out of VISUAL loops
@@ -529,12 +529,12 @@ class FocusEngine:
 
             if time_in_focus < min_duration:
                 # Too soon to interrupt - stay in current focus
-                print(f"🧠 {self.current_focus} mode sticky - ignoring novelty ({time_in_focus:.0f}s < {min_duration}s)")
+                print(f"{self.current_focus} mode sticky - ignoring novelty ({time_in_focus:.0f}s < {min_duration}s)")
             elif novelty_score > adjusted_threshold:
                 # Strong enough evidence to overcome stickiness
                 return self._focus_visual(state_analysis, "high_novelty_interrupt")
             else:
-                print(f"🧠 {self.current_focus} mode sticky - novelty {novelty_score:.2f} < {adjusted_threshold:.2f}")
+                print(f"{self.current_focus} mode sticky - novelty {novelty_score:.2f} < {adjusted_threshold:.2f}")
 
         # Significant emotional shifts need processing
         if state_analysis['emotional']['volatility'] > 0.6:
@@ -565,7 +565,7 @@ class FocusEngine:
         if self.current_focus == "VISUAL":
             activity_score = state_analysis.get('visual', {}).get('activity_score', 0)
             if activity_score < 60.0:  # Activity settled - vision no longer needed (typing/small movements)
-                print(f"👁️ Activity settled ({activity_score:.1f}) - exiting VISUAL mode")
+                print(f"️ Activity settled ({activity_score:.1f}) - exiting VISUAL mode")
                 return self._focus_philosophical(state_analysis, "activity_settled")
 
         # Moderate novelty in VISUAL mode - continue if threshold met
@@ -897,7 +897,7 @@ class FocusEngine:
 
         # PERSON mode NEVER continues - always exit after ONE observation
         if self.current_focus == "PERSON":
-            print(f"👤 PERSON mode complete - transitioning to introspective mode")
+            print(f"PERSON mode complete - transitioning to introspective mode")
             # Transition to mode that continues the narrative
             # Store the visual detail for use in next prompt
             return self._focus_philosophical(state, "person_observed_continue_musing")

@@ -54,7 +54,7 @@ class ActivityDetector:
 
         # During calibration, just learn background
         if self.frames_processed < self.calibration_frames:
-            print(f"📊 Calibrating background model: {self.frames_processed}/{self.calibration_frames}")
+            print(f"Calibrating background model: {self.frames_processed}/{self.calibration_frames}")
             return {
                 'activity_score': 0.0,
                 'fg_percentage': fg_percentage,
@@ -91,7 +91,7 @@ class ActivityDetector:
 
         # Debug output (suppressed to reduce terminal clutter)
         # if fg_percentage > 1:
-        #     print(f"📊 Activity: {fg_percentage:.1f}% changed | score: {activity_score:.0f} | movement: {is_real_movement}")
+        #     print(f"Activity: {fg_percentage:.1f}% changed | score: {activity_score:.0f} | movement: {is_real_movement}")
 
         return {
             'activity_score': float(activity_score),
@@ -141,7 +141,7 @@ if __name__ == "__main__":
     print("Using background subtraction (MOG2)\n")
 
     # Find all available cameras
-    print("🔍 Searching for cameras...")
+    print("Searching for cameras...")
     available_cameras = []
     for i in range(5):  # Check first 5 indices
         cap = cv2.VideoCapture(i)
@@ -153,20 +153,20 @@ if __name__ == "__main__":
             cap.release()
 
     if not available_cameras:
-        print("❌ No cameras found")
+        print("No cameras found")
         exit(1)
 
     # Prefer external camera (usually higher index than 0)
     if len(available_cameras) > 1:
         camera_idx = available_cameras[-1]  # Use last found (likely external)
-        print(f"\n✅ Using camera {camera_idx} (external camera detected)")
+        print(f"\nUsing camera {camera_idx} (external camera detected)")
     else:
         camera_idx = available_cameras[0]
-        print(f"\n✅ Using camera {camera_idx}")
+        print(f"\nUsing camera {camera_idx}")
 
     cap = cv2.VideoCapture(camera_idx)
     if not cap.isOpened():
-        print("❌ Cannot open selected camera")
+        print("Cannot open selected camera")
         exit(1)
 
     detector = ActivityDetector()
@@ -212,4 +212,4 @@ if __name__ == "__main__":
     cap.release()
     cv2.destroyAllWindows()
 
-    print("\n✅ Test complete!")
+    print("\nTest complete!")
