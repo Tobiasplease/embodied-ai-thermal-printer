@@ -536,7 +536,7 @@ class EmbodiedAI:
                         # Cache for use on non-tracking frames
                         self.cached_presence_state = presence_state
 
-                        # Update subtitle projector drone volume based on person presence
+                        # IMMEDIATE drone volume update based on person detection (no caching delay)
                         if self.subtitle_projector and presence_state:
                             self.subtitle_projector.set_presence_volume(presence_state.person_count)
 

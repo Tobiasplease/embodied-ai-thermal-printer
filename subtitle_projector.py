@@ -277,28 +277,21 @@ class SubtitleProjector:
         return "break"
 
     def _set_presence_volume(self, person_count):
-        """Adjust drone volume based on person presence (smooth, subtle increase)"""
-        if not PYGAME_AVAILABLE or not self.audio_file:
-            return
+        """DISABLED - Volume changes interfere with PyAudio TTS on Windows
 
-        # Calculate target volume based on person count
-        # Base volume when alone, +10% per person (capped at +30% for 3+ people)
-        if person_count == 0:
-            self.target_volume = self.base_volume
-        elif person_count == 1:
-            self.target_volume = min(1.0, self.base_volume * 1.10)  # +10% for 1 person
-        elif person_count == 2:
-            self.target_volume = min(1.0, self.base_volume * 1.20)  # +20% for 2 people
-        else:
-            self.target_volume = min(1.0, self.base_volume * 1.30)  # +30% for 3+ people
+        Issue: pygame.mixer.music.set_volume() should only affect music channel,
+        but on Windows it causes PyAudio (TTS voice) to fade in/out as well.
+        Root cause unknown - possibly Windows audio mixer interference.
 
-        # Start smooth volume interpolation if not already running
-        if not hasattr(self, '_volume_interpolating'):
-            self._volume_interpolating = True
-            self._interpolate_volume()
+        TODO: Investigate alternatives:
+        - Use pygame Sound objects for TTS instead of PyAudio
+        - Pre-process drone audio at different volume levels
+        - Find Windows audio API that doesn't interfere
+        """
+        return  # Disabled until proper fix found
 
     def _interpolate_volume(self):
-        """Smoothly interpolate current volume towards target volume"""
+        """Smoothly interpolate current volume towards target volume (MUSIC CHANNEL ONLY)"""
         if not PYGAME_AVAILABLE or not self.audio_file:
             return
 
@@ -309,16 +302,19 @@ class SubtitleProjector:
             # If close enough, snap to target and stop interpolating
             if abs(diff) < 0.001:
                 self.audio_volume = self.target_volume
+                # Use set_volume on music channel ONLY (should not affect PyAudio TTS)
                 pygame.mixer.music.set_volume(self.audio_volume)
                 self._volume_interpolating = False
                 return
 
-            # Smooth interpolation (20% of remaining difference per step)
-            self.audio_volume += diff * 0.2
+            # Fast interpolation (60% of remaining difference per step for immediate response)
+            self.audio_volume += diff * 0.6
+            # Use set_volume on music channel ONLY (should not affect PyAudio TTS)
             pygame.mixer.music.set_volume(self.audio_volume)
+            print(f"[AUDIO] Drone volume: {self.audio_volume:.2f} (target: {self.target_volume:.2f})")
 
-            # Continue interpolating (check every 50ms for smooth transition)
-            self.root.after(50, self._interpolate_volume)
+            # Continue interpolating (check every 20ms for immediate response to person detection)
+            self.root.after(20, self._interpolate_volume)
         except Exception as e:
             print(f"[AUDIO] Volume interpolation error: {e}")
             self._volume_interpolating = False
@@ -414,8 +410,17 @@ class SubtitleProjector:
         thread.start()
 
     def check_alive(self):
-        """Keep window responsive"""
+        """Keep window responsive and monitor audio playback"""
         if self.running:
+            # Check if music stopped unexpectedly and restart it
+            if PYGAME_AVAILABLE and self.audio_file and self.audio_playing:
+                if not pygame.mixer.music.get_busy():
+                    print("[AUDIO] Drone stopped unexpectedly - restarting...")
+                    try:
+                        pygame.mixer.music.play(loops=-1, fade_ms=500)  # Quick fade-in on restart
+                    except Exception as e:
+                        print(f"[AUDIO] Restart failed: {e}")
+
             self.root.after(100, self.check_alive)
 
     def run(self):
